@@ -1,0 +1,28 @@
+{
+  "name": "@agent-hub/server",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "agent:key": "tsx scripts/create-agent.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.80.0",
+    "@modelcontextprotocol/sdk": "^1.20.0",
+    "@supabase/supabase-js": "^2.57.4",
+    "cron-parser": "^5.3.0",
+    "dotenv": "^16.4.5",
+    "hono": "^4.13.0",
+    "openai": "^6.34.0",
+    "zod": "^3.25.0",
+    "zod-to-json-schema": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  },
+  "engines": { "node": ">=20" }
+}
