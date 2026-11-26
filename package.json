@@ -8,6 +8,8 @@
     "dev:web": "npm run dev -w web",
     "build": "npm run build --workspaces --if-present && wrangler deploy --dry-run --outdir dist/worker",
     "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run typecheck",
+    "test": "npm run test -w server",
     "deploy": "npm run build && wrangler deploy",
     "cf-typegen": "wrangler types",
     "agent:key": "npm run agent:key -w server --"

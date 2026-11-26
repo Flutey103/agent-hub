@@ -4,6 +4,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import Layout from "./components/Layout";
 import { useRealtime } from "./lib/queries";
 import { supabase, supabaseConfigured } from "./lib/supabase";
+import { WorkspaceProvider } from "./lib/workspace";
 import Activity from "./pages/Activity";
 import Agents from "./pages/Agents";
 import Artifacts from "./pages/Artifacts";
@@ -14,7 +15,7 @@ import Loops from "./pages/Loops";
 import NewTask from "./pages/NewTask";
 import TaskDetail from "./pages/TaskDetail";
 
-function Authed() {
+function AuthedRoutes() {
   useRealtime();
   return (
     <Layout>
@@ -30,6 +31,14 @@ function Authed() {
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Layout>
+  );
+}
+
+function Authed({ session }: { session: Session }) {
+  return (
+    <WorkspaceProvider session={session}>
+      <AuthedRoutes />
+    </WorkspaceProvider>
   );
 }
 
@@ -57,7 +66,7 @@ function SessionApp() {
   }, []);
   if (session === undefined) return <div className="p-8 text-sm text-neutral-500">Loading…</div>;
   if (!session) return <Login />;
-  return <Authed />;
+  return <Authed session={session} />;
 }
 
 export default function App() {

@@ -7,8 +7,16 @@ import { env } from "./env.js";
  * so the client holds no user request state.
  */
 let cached: { url: string; key: string; client: SupabaseClient } | undefined;
+let testClient: SupabaseClient | null = null;
+
+/** Tests inject a client so hub queries can be asserted without a network. */
+export function setDbForTests(client: SupabaseClient | null): void {
+  testClient = client;
+  cached = undefined;
+}
 
 export function getDb(): SupabaseClient {
+  if (testClient) return testClient;
   const url = env.supabaseUrl;
   const key = env.supabaseServiceRoleKey;
   if (!cached || cached.url !== url || cached.key !== key) {

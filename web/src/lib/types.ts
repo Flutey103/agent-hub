@@ -11,6 +11,10 @@ export interface Agent {
   system_prompt: string | null;
   is_active: boolean;
   last_seen_at: string | null;
+  workspace_id?: string;
+  has_api_key?: boolean;
+  oauth_client_id?: string | null;
+  created_by?: string | null;
 }
 
 export interface Task {

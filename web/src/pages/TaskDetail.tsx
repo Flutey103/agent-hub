@@ -5,6 +5,7 @@ import { Link, useParams } from "react-router-dom";
 import { serverPost } from "../lib/api";
 import { useAgents, useArtifactsByIds, useHandoffNotes, useTask } from "../lib/queries";
 import { supabase } from "../lib/supabase";
+import { useWorkspace } from "../lib/workspace";
 import { STATUS_CLASS, STATUS_LABEL, timeAgo, type Artifact } from "../lib/types";
 
 function ArtifactBlock({ a }: { a: Artifact }) {
@@ -23,6 +24,7 @@ function ArtifactBlock({ a }: { a: Artifact }) {
 }
 
 export default function TaskDetail() {
+  const { workspaceId } = useWorkspace();
   const { id } = useParams();
   const qc = useQueryClient();
   const { data: task, isLoading } = useTask(id);
@@ -55,7 +57,7 @@ export default function TaskDetail() {
   }
 
   async function cancel() {
-    await supabase.from("tasks").update({ status: "cancelled" }).eq("id", task!.id);
+    await supabase.from("tasks").update({ status: "cancelled" }).eq("id", task!.id).eq("workspace_id", workspaceId);
     await qc.invalidateQueries({ queryKey: ["tasks"] });
     await qc.invalidateQueries({ queryKey: ["task", task!.id] });
   }

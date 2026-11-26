@@ -10,7 +10,7 @@ import { db } from "./db.js";
 import { env } from "./env.js";
 import { listMyTasks, logActivity, releaseTask } from "./hub.js";
 import { jsonSchemaFor, runTool, tools } from "./tools.js";
-import type { Agent } from "./types.js";
+import { AGENT_COLUMNS, type Agent } from "./types.js";
 
 const MAX_TURNS = 30;
 
@@ -145,7 +145,7 @@ function providerConfigured(agent: Agent): boolean {
 
 /** Works at most one task per headless agent per tick. */
 export async function runHeadlessAgents() {
-  const { data } = await db.from("agents").select("id, slug, name, provider, model, mode, capabilities, system_prompt, is_active").eq("mode", "headless").eq("is_active", true);
+  const { data } = await db.from("agents").select(AGENT_COLUMNS).eq("mode", "headless").eq("is_active", true);
   for (const agent of (data ?? []) as Agent[]) {
     if (!providerConfigured(agent)) continue;
     const queued = (await listMyTasks(agent, { include_claimed: false })).filter((t) => t.status === "queued");
@@ -163,6 +163,7 @@ export async function runHeadlessAgents() {
     try {
       const result = agent.provider === "anthropic" ? await runAnthropic(agent, claim) : await runOpenAICompatible(agent, claim);
       await db.from("tool_calls").insert({
+        workspace_id: agent.workspace_id,
         agent_id: agent.id,
         task_id: next.id,
         tool: "headless_run",
@@ -173,7 +174,7 @@ export async function runHeadlessAgents() {
       });
       if (!result.completed) {
         await releaseTask(agent, { task_id: next.id, reason: "Headless run ended without complete_task" }).catch(() => {});
-        await logActivity(agent.id, next.id, "runner_incomplete", {});
+        await logActivity(agent.workspace_id, agent.id, next.id, "runner_incomplete", {});
       }
     } catch (e) {
       console.error(JSON.stringify({ message: "headless run failed", agent: agent.slug, error: (e as Error).message }));

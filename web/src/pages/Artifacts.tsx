@@ -2,10 +2,12 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { useArtifacts } from "../lib/queries";
 import { supabase } from "../lib/supabase";
+import { useWorkspace } from "../lib/workspace";
 import { timeAgo, type Artifact } from "../lib/types";
 
 export default function Artifacts() {
   const qc = useQueryClient();
+  const { workspaceId } = useWorkspace();
   const { data: artifacts = [] } = useArtifacts();
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
@@ -23,7 +25,7 @@ export default function Artifacts() {
 
   async function saveVersion(key: string, title: string, content: string) {
     const version = (byKey.get(key)?.[0]?.version ?? 0) + 1;
-    const { error } = await supabase.from("artifacts").insert({ key, version, title, kind: "markdown", content });
+    const { error } = await supabase.from("artifacts").insert({ workspace_id: workspaceId, key, version, title, kind: "markdown", content });
     if (error) return alert(error.message);
     await qc.invalidateQueries({ queryKey: ["artifacts"] });
     setEditing(false);

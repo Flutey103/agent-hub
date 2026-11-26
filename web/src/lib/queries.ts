@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { supabase } from "./supabase";
 import type { ActivityRow, Agent, Artifact, HandoffNote, Loop, Task } from "./types";
+import { useWorkspace } from "./workspace";
 
 async function rows<T>(q: PromiseLike<{ data: unknown; error: { message: string } | null }>): Promise<T[]> {
   const { data, error } = await q;
@@ -9,26 +10,31 @@ async function rows<T>(q: PromiseLike<{ data: unknown; error: { message: string 
   return (data ?? []) as T[];
 }
 
+const AGENT_COLUMNS = "id,slug,name,provider,model,mode,capabilities,system_prompt,is_active,last_seen_at,workspace_id,has_api_key,oauth_client_id,created_by";
+
 export function useAgents() {
+  const { workspaceId } = useWorkspace();
   return useQuery({
-    queryKey: ["agents"],
-    queryFn: () => rows<Agent>(supabase.from("agents").select("id,slug,name,provider,model,mode,capabilities,system_prompt,is_active,last_seen_at").order("name")),
+    queryKey: ["agents", workspaceId],
+    queryFn: () => rows<Agent>(supabase.from("agents").select(AGENT_COLUMNS).eq("workspace_id", workspaceId).order("name")),
   });
 }
 
 export function useTasks() {
+  const { workspaceId } = useWorkspace();
   return useQuery({
-    queryKey: ["tasks"],
-    queryFn: () => rows<Task>(supabase.from("tasks").select("*").order("priority").order("created_at", { ascending: false }).limit(500)),
+    queryKey: ["tasks", workspaceId],
+    queryFn: () => rows<Task>(supabase.from("tasks").select("*").eq("workspace_id", workspaceId).order("priority").order("created_at", { ascending: false }).limit(500)),
   });
 }
 
 export function useTask(id: string | undefined) {
+  const { workspaceId } = useWorkspace();
   return useQuery({
-    queryKey: ["task", id],
+    queryKey: ["task", workspaceId, id],
     enabled: !!id,
     queryFn: async () => {
-      const { data, error } = await supabase.from("tasks").select("*").eq("id", id!).single();
+      const { data, error } = await supabase.from("tasks").select("*").eq("workspace_id", workspaceId).eq("id", id!).single();
       if (error) throw new Error(error.message);
       return data as Task;
     },
@@ -36,36 +42,44 @@ export function useTask(id: string | undefined) {
 }
 
 export function useHandoffNotes(taskId: string | undefined) {
+  const { workspaceId } = useWorkspace();
   return useQuery({
-    queryKey: ["handoff", taskId],
+    queryKey: ["handoff", workspaceId, taskId],
     enabled: !!taskId,
-    queryFn: () => rows<HandoffNote>(supabase.from("handoff_notes").select("*").eq("task_id", taskId!).order("created_at")),
+    queryFn: () => rows<HandoffNote>(supabase.from("handoff_notes").select("*").eq("workspace_id", workspaceId).eq("task_id", taskId!).order("created_at")),
   });
 }
 
 export function useArtifacts() {
+  const { workspaceId } = useWorkspace();
   return useQuery({
-    queryKey: ["artifacts"],
-    queryFn: () => rows<Artifact>(supabase.from("artifacts").select("*").order("created_at", { ascending: false }).limit(300)),
+    queryKey: ["artifacts", workspaceId],
+    queryFn: () => rows<Artifact>(supabase.from("artifacts").select("*").eq("workspace_id", workspaceId).order("created_at", { ascending: false }).limit(300)),
   });
 }
 
 export function useArtifactsByIds(ids: string[]) {
+  const { workspaceId } = useWorkspace();
   return useQuery({
-    queryKey: ["artifacts", ids],
+    queryKey: ["artifacts", workspaceId, ids],
     enabled: ids.length > 0,
-    queryFn: () => rows<Artifact>(supabase.from("artifacts").select("*").in("id", ids)),
+    queryFn: () => rows<Artifact>(supabase.from("artifacts").select("*").eq("workspace_id", workspaceId).in("id", ids)),
   });
 }
 
 export function useLoops() {
-  return useQuery({ queryKey: ["loops"], queryFn: () => rows<Loop>(supabase.from("loops").select("*").order("name")) });
+  const { workspaceId } = useWorkspace();
+  return useQuery({
+    queryKey: ["loops", workspaceId],
+    queryFn: () => rows<Loop>(supabase.from("loops").select("*").eq("workspace_id", workspaceId).order("name")),
+  });
 }
 
 export function useActivity(limit = 100) {
+  const { workspaceId } = useWorkspace();
   return useQuery({
-    queryKey: ["activity", limit],
-    queryFn: () => rows<ActivityRow>(supabase.from("activity").select("*").order("created_at", { ascending: false }).limit(limit)),
+    queryKey: ["activity", workspaceId, limit],
+    queryFn: () => rows<ActivityRow>(supabase.from("activity").select("*").eq("workspace_id", workspaceId).order("created_at", { ascending: false }).limit(limit)),
   });
 }
 
