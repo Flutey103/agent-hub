@@ -100,13 +100,7 @@ Create `brand-voice` and `design-system-summary` on the Artifacts page before th
 
 Do not commit secrets. The Worker already expects these, and this change adds one KV binding.
 
-1. **KV namespace for OAuth tokens.** `wrangler.jsonc` binds `OAUTH_KV` with a placeholder id. Create the namespace and paste the real id before deploying:
-
-```bash
-npx wrangler kv namespace create OAUTH_KV
-```
-
-`wrangler dev` simulates that namespace locally, so the placeholder is enough on your machine. A deploy against the placeholder id will be rejected by Cloudflare.
+1. **KV namespace for OAuth tokens.** `wrangler.jsonc` binds `OAUTH_KV` to namespace `18f7ffed2fd24c7c8bccb4089c266966`. `wrangler dev` simulates that namespace locally.
 
 2. **Runtime secrets** (already in use; no new secret is required for OAuth):
 
@@ -120,7 +114,7 @@ Optional, for headless providers: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `XAI_AP
 - `VITE_SUPABASE_URL`
 - `VITE_SUPABASE_ANON_KEY`
 
-`PUBLIC_URL` in `wrangler.jsonc` should be the single https origin connectors will paste. OAuth tokens are bound to the origin of the request.
+`PUBLIC_URL` is `https://agent-hub.flutey103.workers.dev`, the origin connectors paste. OAuth tokens are bound to the origin of the request.
 
 `compatibility_flags` includes `global_fetch_strictly_public` so Client ID Metadata Documents (used by current Claude and ChatGPT connectors) can be fetched safely. Dynamic client registration is on `POST /register`. Discovery is `/.well-known/oauth-authorization-server` and `/.well-known/oauth-protected-resource/mcp`.
 

@@ -23,9 +23,7 @@
   "kv_namespaces": [
     {
       "binding": "OAUTH_KV",
-      // Placeholder. Create the namespace and paste its id before deploying:
-      //   npx wrangler kv namespace create OAUTH_KV
-      "id": "00000000000000000000000000000000"
+      "id": "18f7ffed2fd24c7c8bccb4089c266966"
     }
   ],
   "assets": {

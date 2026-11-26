@@ -91,13 +91,7 @@ Runtime Worker secrets (**Settings** → **Variables and Secrets**, or `npx wran
 | `SUPABASE_URL` |
 | `SUPABASE_SERVICE_ROLE_KEY` |
 
-Optional provider secrets are listed in section 4. OAuth tokens live in the `OAUTH_KV` binding, not in a secret. Create the namespace and replace the placeholder id in `wrangler.jsonc` before the first deploy that includes this change:
-
-```bash
-npx wrangler kv namespace create OAUTH_KV
-```
-
-No new Worker secret is required. Build variables stay `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`.
+Optional provider secrets are listed in section 4. OAuth tokens live in the `OAUTH_KV` binding (`18f7ffed2fd24c7c8bccb4089c266966` in `wrangler.jsonc`), not in a secret. No new Worker secret is required. Build variables stay `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`.
 
 ## Local Worker
 
