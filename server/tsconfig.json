@@ -12,5 +12,5 @@
     "rootDir": "..",
     "types": ["node"]
   },
-  "include": ["src", "scripts", "../worker-configuration.d.ts"]
+  "include": ["src", "scripts", "test", "../worker-configuration.d.ts"]
 }

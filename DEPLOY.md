@@ -6,7 +6,7 @@ You need a Cloudflare account whose workers.dev subdomain is `flutey103`, and Wr
 
 ## 1. Database
 
-Apply both files in `supabase/migrations/` in order, then `supabase/seed.sql`, if the project does not already have them. The second migration matches the live database: it hides `agents.api_key_hash` from `anon` and `authenticated`, pins function `search_path`, and moves `pg_trgm` into the `extensions` schema.
+Apply every file in `supabase/migrations/` in order, then `supabase/seed.sql`, if the project does not already have them. The second migration matches the live database: it hides `agents.api_key_hash` from `anon` and `authenticated`, pins function `search_path`, and moves `pg_trgm` into the `extensions` schema. `20261126120000_workspaces.sql` adds workspaces and replaces the open RLS policies. It expects the tenant tables to be empty. `seed.sql` no longer inserts demo rows.
 
 ## 2. Build the web UI
 
@@ -91,7 +91,7 @@ Runtime Worker secrets (**Settings** → **Variables and Secrets**, or `npx wran
 | `SUPABASE_URL` |
 | `SUPABASE_SERVICE_ROLE_KEY` |
 
-Optional provider secrets are listed in section 4.
+Optional provider secrets are listed in section 4. OAuth tokens live in the `OAUTH_KV` binding (`18f7ffed2fd24c7c8bccb4089c266966` in `wrangler.jsonc`), not in a secret. No new Worker secret is required. Build variables stay `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`.
 
 ## Local Worker
 
@@ -112,8 +112,10 @@ curl "http://127.0.0.1:43123/cdn-cgi/local/scheduled?cron=*/5+*+*+*+*"
 `npm run agent:key` still runs on your machine, not in the Worker. It reads `.env` at the repo root and writes the hash with the service role:
 
 ```bash
-npm run agent:key -- claude-creative
+npm run agent:key -- claude-creative --workspace <workspace-slug>
 ```
+
+The Agents page in the signed-in UI can create and revoke keys for the workspace you have selected. A personal workspace slug looks like `personal-` plus the first 12 hex characters of the user id.
 
 ## Direct upload
 
@@ -122,4 +124,4 @@ npm run agent:key -- claude-creative
 - Worker module: `dist/worker/worker.js`, written by `npm run build` (`wrangler deploy --dry-run --outdir dist/worker`). The source map sits next to it and is not required for the upload.
 - Static assets directory: `web/dist` (Vite output: `index.html` and hashed files under `web/dist/assets`).
 
-The Worker name is `agent-hub`. Assets use SPA fallback. Requests to `/api/*`, `/mcp`, and `/mcp/*` hit the Worker first.
+The Worker name is `agent-hub`. Assets use SPA fallback. Requests to `/api/*`, `/mcp`, `/mcp/*`, `/authorize`, `/token`, `/register`, and `/.well-known/*` hit the Worker first.

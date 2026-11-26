@@ -7,9 +7,14 @@ export default defineConfig({
   envDir: "..",
   server: {
     port: 5173,
+    fs: { allow: [".."] },
     proxy: {
       "/api": "http://127.0.0.1:43123",
       "/mcp": "http://127.0.0.1:43123",
+      "/authorize": "http://127.0.0.1:43123",
+      "/token": "http://127.0.0.1:43123",
+      "/register": "http://127.0.0.1:43123",
+      "/.well-known": "http://127.0.0.1:43123",
     },
   },
 });

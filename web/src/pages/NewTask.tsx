@@ -3,10 +3,12 @@ import { useMemo, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAgents, useArtifacts } from "../lib/queries";
 import { supabase } from "../lib/supabase";
+import { useWorkspace } from "../lib/workspace";
 
 export default function NewTask() {
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const { workspaceId } = useWorkspace();
   const { data: agents = [] } = useAgents();
   const { data: artifacts = [] } = useArtifacts();
   const capabilities = useMemo(() => Array.from(new Set(agents.flatMap((a) => a.capabilities))).sort(), [agents]);
@@ -31,6 +33,7 @@ export default function NewTask() {
       .filter((x): x is string => !!x);
     const [kind, value] = route.split(":", 2);
     const row = {
+      workspace_id: workspaceId,
       title,
       brief,
       acceptance_criteria: acceptance || null,
@@ -48,7 +51,7 @@ export default function NewTask() {
       setBusy(false);
       return;
     }
-    await supabase.from("activity").insert({ task_id: data.id, event: "created", detail: { by: "human" } });
+    await supabase.from("activity").insert({ workspace_id: workspaceId, task_id: data.id, event: "created", detail: { by: "human" } });
     await qc.invalidateQueries({ queryKey: ["tasks"] });
     navigate(`/tasks/${data.id}`);
   }

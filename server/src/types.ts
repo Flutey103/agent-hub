@@ -1,5 +1,8 @@
 export type TaskStatus = "queued" | "claimed" | "in_review" | "awaiting_human" | "done" | "failed" | "cancelled";
 
+export const AGENT_COLUMNS =
+  "id, slug, name, provider, model, mode, capabilities, system_prompt, is_active, workspace_id, created_by, oauth_client_id";
+
 export interface Agent {
   id: string;
   slug: string;
@@ -10,10 +13,14 @@ export interface Agent {
   capabilities: string[];
   system_prompt: string | null;
   is_active: boolean;
+  workspace_id: string;
+  created_by: string | null;
+  oauth_client_id: string | null;
 }
 
 export interface Task {
   id: string;
+  workspace_id: string;
   title: string;
   brief: string;
   acceptance_criteria: string | null;
@@ -42,6 +49,7 @@ export interface Task {
 
 export interface Artifact {
   id: string;
+  workspace_id: string;
   key: string;
   version: number;
   title: string;
@@ -67,6 +75,7 @@ export interface LoopStage {
 
 export interface Loop {
   id: string;
+  workspace_id: string;
   slug: string;
   name: string;
   description: string | null;
@@ -78,6 +87,7 @@ export interface Loop {
 
 export interface LoopRun {
   id: string;
+  workspace_id: string;
   loop_id: string;
   status: "running" | "done" | "failed" | "cancelled";
   current_stage: number;

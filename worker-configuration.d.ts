@@ -3,6 +3,7 @@
 // Runtime types generated with workerd@1.20261109.1 2026-11-09 nodejs_compat
 interface __BaseEnv_Env {
 	ASSETS: Fetcher;
+	OAUTH_KV: KVNamespace;
 	PUBLIC_URL: "https://agent-hub.flutey103.workers.dev";
 	DEFAULT_LEASE_MINUTES: "30";
 	RUNNER_ENABLED: "true";

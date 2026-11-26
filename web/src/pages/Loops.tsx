@@ -4,9 +4,11 @@ import { useState } from "react";
 import { serverPost } from "../lib/api";
 import { useLoops } from "../lib/queries";
 import { supabase } from "../lib/supabase";
+import { useWorkspace } from "../lib/workspace";
 
 export default function Loops() {
   const qc = useQueryClient();
+  const { workspaceId } = useWorkspace();
   const { data: loops = [] } = useLoops();
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -26,7 +28,7 @@ export default function Loops() {
   }
 
   async function toggle(id: string, active: boolean) {
-    await supabase.from("loops").update({ is_active: active }).eq("id", id);
+    await supabase.from("loops").update({ is_active: active }).eq("id", id).eq("workspace_id", workspaceId);
     await qc.invalidateQueries({ queryKey: ["loops"] });
   }
 
@@ -73,7 +75,7 @@ export default function Loops() {
             </ol>
           </div>
         ))}
-        {loops.length === 0 && <div className="card text-sm text-neutral-500">No loops yet. Insert one into the loops table (see supabase/seed.sql for the shape).</div>}
+        {loops.length === 0 && <div className="card text-sm text-neutral-500">No loops in this workspace yet. A loop is a row in the loops table with a stages JSON array.</div>}
       </div>
     </div>
   );

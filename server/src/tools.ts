@@ -127,19 +127,20 @@ export async function runTool(agent: Agent, name: string, rawInput: unknown): Pr
   if (!tool) throw new Error(`Unknown tool ${name}`);
   const parsed = z.object(tool.shape).safeParse(rawInput ?? {});
   if (!parsed.success) throw new Error(`Invalid input for ${name}: ${parsed.error.issues.map((i) => `${i.path.join(".")} ${i.message}`).join("; ")}`);
+  if (!agent.workspace_id) throw new Error("Agent is not bound to a workspace");
   const started = Date.now();
   const taskId = typeof (parsed.data as { task_id?: unknown }).task_id === "string" ? (parsed.data as { task_id: string }).task_id : null;
   try {
     const out = await tool.run(agent, parsed.data as Record<string, unknown>);
-    ledger({ agent_id: agent.id, task_id: taskId, tool: name, ok: true, duration_ms: Date.now() - started });
+    ledger({ workspace_id: agent.workspace_id, agent_id: agent.id, task_id: taskId, tool: name, ok: true, duration_ms: Date.now() - started });
     return out;
   } catch (e) {
-    ledger({ agent_id: agent.id, task_id: taskId, tool: name, ok: false, duration_ms: Date.now() - started });
+    ledger({ workspace_id: agent.workspace_id, agent_id: agent.id, task_id: taskId, tool: name, ok: false, duration_ms: Date.now() - started });
     throw e;
   }
 }
 
-function ledger(row: { agent_id: string; task_id: string | null; tool: string; ok: boolean; duration_ms: number }) {
+function ledger(row: { workspace_id: string; agent_id: string; task_id: string | null; tool: string; ok: boolean; duration_ms: number }) {
   waitUntil(
     Promise.resolve(db.from("tool_calls").insert(row)).then(({ error }) => {
       if (error) console.error(JSON.stringify({ message: "tool call ledger failed", tool: row.tool, error: error.message }));

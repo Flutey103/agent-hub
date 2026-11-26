@@ -1,3 +1,4 @@
+import type { OAuthHelpers } from "@cloudflare/workers-oauth-provider";
 import { currentEnv } from "./context.js";
 
 /**
@@ -8,6 +9,9 @@ declare global {
   interface Env {
     SUPABASE_URL: string;
     SUPABASE_SERVICE_ROLE_KEY: string;
+    OAUTH_KV: KVNamespace;
+    /** Injected by the OAuth provider on requests it forwards to the default handler. */
+    OAUTH_PROVIDER?: OAuthHelpers;
     ANTHROPIC_API_KEY?: string;
     OPENAI_API_KEY?: string;
     XAI_API_KEY?: string;

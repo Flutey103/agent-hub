@@ -6,11 +6,12 @@
 import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import type { User } from "@supabase/supabase-js";
+import { createAgentWithKey, publicAgent, revokeAgentKey } from "./agents-admin.js";
 import { authenticateAgent, authenticateUser } from "./auth.js";
 import { HubError } from "./db.js";
-import { env } from "./env.js";
 import { completeHumanTask, startLoop } from "./loops.js";
 import { handleMcp } from "./mcp.js";
+import { handleAuthorize } from "./oauth.js";
 import { jsonSchemaFor, runTool, toolByName, tools } from "./tools.js";
 import type { Agent } from "./types.js";
 
@@ -51,14 +52,16 @@ api.use("*", async (c, next) => {
   await next();
 });
 
-api.get("/health", (c) =>
-  c.json({
+api.get("/health", (c) => {
+  const origin = new URL(c.req.url).origin;
+  return c.json({
     ok: true,
     tools: tools.map((t) => t.name),
-    mcp: `${env.publicUrl}/mcp`,
-    openapi: `${env.publicUrl}/api/openapi.json`,
-  }),
-);
+    mcp: `${origin}/mcp`,
+    oauth: `${origin}/.well-known/oauth-authorization-server`,
+    openapi: `${origin}/api/openapi.json`,
+  });
+});
 
 api.get("/openapi.json", (c) => {
   const paths: Record<string, unknown> = {};
@@ -79,7 +82,7 @@ api.get("/openapi.json", (c) => {
       version: "0.1.0",
       description: "Shared task queue for AI agents. Authenticate with your agent API key as a Bearer token.",
     },
-    servers: [{ url: env.publicUrl }],
+    servers: [{ url: new URL(c.req.url).origin }],
     components: { securitySchemes: { bearerAuth: { type: "http", scheme: "bearer" } } },
     security: [{ bearerAuth: [] }],
     paths,
@@ -89,7 +92,14 @@ api.get("/openapi.json", (c) => {
 api.get("/me", async (c) => {
   const agent = await authenticateAgent(c.req.raw);
   if (agent instanceof Response) return agent;
-  return c.json({ id: agent.id, slug: agent.slug, name: agent.name, capabilities: agent.capabilities, mode: agent.mode });
+  return c.json({
+    id: agent.id,
+    slug: agent.slug,
+    name: agent.name,
+    capabilities: agent.capabilities,
+    mode: agent.mode,
+    workspace_id: agent.workspace_id,
+  });
 });
 
 api.post("/tools/:name", async (c) => {
@@ -113,7 +123,7 @@ api.post("/human/tasks/:id/complete", async (c) => {
   if (body instanceof Response) return body;
   const summary = typeof body.summary === "string" && body.summary.trim() ? body.summary : "Completed in the hub UI";
   try {
-    return c.json(await completeHumanTask(c.req.param("id"), summary, user.email ?? "user"));
+    return c.json(await completeHumanTask(c.req.param("id"), summary, { id: user.id, email: user.email }));
   } catch (error) {
     return toolError(c, error);
   }
@@ -123,7 +133,42 @@ api.post("/human/loops/:id/run", async (c) => {
   const user = await authenticateUser(c.req.raw);
   if (user instanceof Response) return user;
   try {
-    return c.json(await startLoop(c.req.param("id")));
+    return c.json(await startLoop(c.req.param("id"), { userId: user.id }));
+  } catch (error) {
+    return toolError(c, error);
+  }
+});
+
+api.post("/workspaces/:workspaceId/api-keys", async (c) => {
+  const user = await authenticateUser(c.req.raw);
+  if (user instanceof Response) return user;
+  const body = await readJson(c);
+  if (body instanceof Response) return body;
+  const capabilities = Array.isArray(body.capabilities) ? body.capabilities.filter((item): item is string => typeof item === "string") : [];
+  try {
+    const created = await createAgentWithKey({
+      userId: user.id,
+      workspaceId: c.req.param("workspaceId"),
+      name: typeof body.name === "string" ? body.name : "",
+      provider: typeof body.provider === "string" ? body.provider : undefined,
+      mode: typeof body.mode === "string" ? body.mode : undefined,
+      preset: typeof body.preset === "string" ? body.preset : undefined,
+      capabilities,
+      model: typeof body.model === "string" ? body.model : null,
+      systemPrompt: typeof body.system_prompt === "string" ? body.system_prompt : null,
+    });
+    return c.json({ agent: publicAgent(created.agent), api_key: created.apiKey });
+  } catch (error) {
+    return toolError(c, error);
+  }
+});
+
+api.delete("/workspaces/:workspaceId/api-keys/:agentId", async (c) => {
+  const user = await authenticateUser(c.req.raw);
+  if (user instanceof Response) return user;
+  try {
+    await revokeAgentKey(user.id, c.req.param("workspaceId"), c.req.param("agentId"));
+    return c.json({ ok: true });
   } catch (error) {
     return toolError(c, error);
   }
@@ -132,6 +177,8 @@ api.post("/human/loops/:id/run", async (c) => {
 api.all("*", (c) => c.json({ error: "Not found" }, 404));
 
 app.route("/api", api);
+
+app.on(["GET", "POST"], "/authorize", (c) => handleAuthorize(c));
 
 app.all("/mcp", async (c) => {
   const length = Number(c.req.header("content-length") ?? "0");
