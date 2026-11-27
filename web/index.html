@@ -2,8 +2,26 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Agent Hub</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>__PRODUCT_TITLE__</title>
+    <meta name="description" content="__PRODUCT_DESCRIPTION__" />
+    <link rel="canonical" href="__PRODUCT_URL__" />
+    <meta property="og:title" content="__PRODUCT_TITLE__" />
+    <meta property="og:description" content="__PRODUCT_DESCRIPTION__" />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="__PRODUCT_URL__" />
+    <meta property="og:site_name" content="__PRODUCT_NAME__" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="__PRODUCT_TITLE__" />
+    <meta name="twitter:description" content="__PRODUCT_DESCRIPTION__" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <script>
+      try {
+        var stored = localStorage.getItem("agent-hub.theme");
+        var dark = stored === "dark" || ((!stored || stored === "system") && matchMedia("(prefers-color-scheme: dark)").matches);
+        if (dark) document.documentElement.classList.add("dark");
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -1,160 +1,188 @@
-import { useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Check } from "lucide-react";
-import { useState } from "react";
-import { Link, useParams } from "react-router-dom";
-import { serverPost } from "../lib/api";
-import { useAgents, useArtifactsByIds, useHandoffNotes, useTask } from "../lib/queries";
-import { supabase } from "../lib/supabase";
-import { useWorkspace } from "../lib/workspace";
-import { STATUS_CLASS, STATUS_LABEL, timeAgo, type Artifact } from "../lib/types";
+import { useQueryClient } from "@tanstack/react-query"
+import { ArrowLeft } from "lucide-react"
+import { useState } from "react"
+import { Link, useParams } from "react-router-dom"
+import { toast } from "sonner"
+import { productName } from "../../../shared/brand"
+import { MarkdownView } from "@/components/markdown-view"
+import { ResponsiveDialog } from "@/components/responsive-dialog"
+import { Button } from "@/components/ui/button"
+import { Textarea } from "@/components/ui/input"
+import { ErrorText, LoadingBlock, StatusLabel } from "@/components/ui-bits"
+import { useAgents, useArtifactsByIds, useHandoffNotes, useTask, useToolCalls } from "@/lib/queries"
+import { approveTask, cancelTask, refreshWork, requestTaskChanges, usePreviewLock } from "@/lib/task-actions"
+import { PRIORITY_LABEL, timeAgo, type Artifact } from "@/lib/types"
+import { usePageTitle } from "@/lib/utils"
+import { usePaths, useWorkspace } from "@/lib/workspace"
 
-function ArtifactBlock({ a }: { a: Artifact }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="card">
-      <button className="flex w-full items-center justify-between text-left" onClick={() => setOpen(!open)}>
-        <span className="text-sm font-medium">
-          {a.title} <span className="text-neutral-400">({a.key} v{a.version})</span>
-        </span>
-        <span className="text-xs text-neutral-400">{open ? "hide" : "show"}</span>
-      </button>
-      {open && <pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap text-xs">{a.content}</pre>}
-    </div>
-  );
-}
+export default function TaskDetailPage() {
+  const { id } = useParams()
+  const paths = usePaths()
+  const { workspaceId } = useWorkspace()
+  const qc = useQueryClient()
+  const locked = usePreviewLock()
+  const taskQuery = useTask(id)
+  const agents = useAgents()
+  const notes = useHandoffNotes(id)
+  const calls = useToolCalls(id)
+  const task = taskQuery.data
+  usePageTitle(task ? `${task.title} — ${productName}` : `Task — ${productName}`)
+  const ids = [...(task?.input_artifact_ids ?? []), ...(task?.output_artifact_ids ?? [])]
+  const artifacts = useArtifactsByIds(ids)
+  const [summary, setSummary] = useState("")
+  const [changesOpen, setChangesOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-export default function TaskDetail() {
-  const { workspaceId } = useWorkspace();
-  const { id } = useParams();
-  const qc = useQueryClient();
-  const { data: task, isLoading } = useTask(id);
-  const { data: agents = [] } = useAgents();
-  const { data: notes = [] } = useHandoffNotes(id);
-  const ids = [...(task?.input_artifact_ids ?? []), ...(task?.output_artifact_ids ?? [])];
-  const { data: artifacts = [] } = useArtifactsByIds(ids);
-  const [summary, setSummary] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  if (taskQuery.isLoading) return <LoadingBlock />
+  if (taskQuery.error || !task) return <ErrorText message={taskQuery.error?.message ?? "Task not found"} />
 
-  if (isLoading || !task) return <div className="text-sm text-neutral-500">Loading…</div>;
-  const agentName = (aid: string | null) => agents.find((a) => a.id === aid)?.name ?? (aid ? "unknown agent" : "human");
-  const inputs = artifacts.filter((a) => task.input_artifact_ids.includes(a.id));
-  const outputs = artifacts.filter((a) => task.output_artifact_ids.includes(a.id));
-  const canComplete = ["awaiting_human", "in_review", "queued", "claimed"].includes(task.status);
+  const agentName = (agentId: string | null) => agents.data?.find((agent) => agent.id === agentId)?.name ?? (agentId ? "Assistant" : "You")
+  const inputs = (artifacts.data ?? []).filter((artifact) => task.input_artifact_ids.includes(artifact.id))
+  const outputs = (artifacts.data ?? []).filter((artifact) => task.output_artifact_ids.includes(artifact.id))
+  const canAct = ["awaiting_human", "in_review", "queued", "claimed"].includes(task.status)
 
-  async function complete() {
-    setBusy(true);
-    setError(null);
+  async function approve() {
+    if (locked("Approving")) return
+    setBusy(true)
+    setError(null)
     try {
-      await serverPost(`/human/tasks/${task!.id}/complete`, { summary });
-      await qc.invalidateQueries({ queryKey: ["tasks"] });
-      await qc.invalidateQueries({ queryKey: ["task", task!.id] });
-    } catch (e) {
-      setError((e as Error).message);
+      await approveTask(task!.id, summary || "Approved")
+      await refreshWork(qc)
+      toast("Marked done")
+    } catch (approveError) {
+      setError((approveError as Error).message)
     } finally {
-      setBusy(false);
+      setBusy(false)
+    }
+  }
+
+  async function sendBack() {
+    if (locked("Sending changes")) return
+    setBusy(true)
+    setError(null)
+    try {
+      await requestTaskChanges(workspaceId, task!.id, summary)
+      await refreshWork(qc)
+      setChangesOpen(false)
+      toast("Sent back")
+    } catch (changeError) {
+      setError((changeError as Error).message)
+    } finally {
+      setBusy(false)
     }
   }
 
   async function cancel() {
-    await supabase.from("tasks").update({ status: "cancelled" }).eq("id", task!.id).eq("workspace_id", workspaceId);
-    await qc.invalidateQueries({ queryKey: ["tasks"] });
-    await qc.invalidateQueries({ queryKey: ["task", task!.id] });
+    if (locked("Cancelling")) return
+    setBusy(true)
+    try {
+      await cancelTask(workspaceId, task!.id)
+      await refreshWork(qc)
+      toast("Cancelled")
+    } catch (cancelError) {
+      setError((cancelError as Error).message)
+    } finally {
+      setBusy(false)
+    }
   }
 
+  const timeline = [
+    ...(notes.data ?? []).map((note) => ({ at: note.created_at, kind: "note" as const, note })),
+    ...inputs.map((artifact) => ({ at: artifact.created_at, kind: "input" as const, artifact })),
+    ...outputs.map((artifact) => ({ at: artifact.created_at, kind: "output" as const, artifact })),
+    ...(calls.data ?? []).map((call) => ({ at: call.created_at, kind: "call" as const, call })),
+  ].sort((a, b) => a.at.localeCompare(b.at))
+
   return (
-    <div className="max-w-4xl space-y-4">
-      <Link to="/" className="inline-flex items-center gap-1 text-sm text-neutral-500 hover:text-neutral-800">
-        <ArrowLeft size={14} /> Board
-      </Link>
-      <div className="flex items-start justify-between gap-4">
-        <h1 className="text-xl font-semibold">{task.title}</h1>
-        <span className={`pill ${STATUS_CLASS[task.status]}`}>{STATUS_LABEL[task.status]}</span>
-      </div>
-      <div className="grid grid-cols-3 gap-2 text-xs text-neutral-500">
-        <div>Assigned: {task.is_human ? "human" : agentName(task.assignee_agent_id) !== "human" ? agentName(task.assignee_agent_id) : (task.assignee_capability ?? "anyone")}</div>
-        <div>Held by: {task.claimed_by ? agentName(task.claimed_by) : "nobody"}</div>
-        <div>Updated: {timeAgo(task.updated_at)}</div>
-        {task.review_by_capability && <div>Review by: {task.review_by_capability}</div>}
-        {task.lease_expires_at && <div>Lease ends: {new Date(task.lease_expires_at).toLocaleString()}</div>}
-        {task.due_at && <div>Due: {new Date(task.due_at).toLocaleString()}</div>}
-        {task.parent_task_id && (
-          <div>
-            Parent: <Link className="underline" to={`/tasks/${task.parent_task_id}`}>open</Link>
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_16rem]">
+      <div className="min-w-0 space-y-4">
+        <Link to={paths.tasks} className="inline-flex min-h-11 items-center gap-1 text-sm text-muted-foreground">
+          <ArrowLeft className="size-4" /> Tasks
+        </Link>
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight">{task.title}</h1>
+          <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+            <StatusLabel status={task.status} />
+            <span>{PRIORITY_LABEL[task.priority]}</span>
+            <span>{task.is_human ? "Assigned to you" : agentName(task.assignee_agent_id)}</span>
+            <span>Updated {timeAgo(task.updated_at)}</span>
           </div>
-        )}
-      </div>
-
-      <section className="card">
-        <h2 className="mb-1 text-xs font-semibold uppercase text-neutral-500">Brief</h2>
-        <p className="whitespace-pre-wrap text-sm">{task.brief}</p>
-        {task.acceptance_criteria && (
-          <>
-            <h2 className="mb-1 mt-3 text-xs font-semibold uppercase text-neutral-500">Acceptance criteria</h2>
-            <p className="whitespace-pre-wrap text-sm">{task.acceptance_criteria}</p>
-          </>
-        )}
-      </section>
-
-      {inputs.length > 0 && (
-        <section className="space-y-2">
-          <h2 className="text-xs font-semibold uppercase text-neutral-500">Inputs</h2>
-          {inputs.map((a) => (
-            <ArtifactBlock key={a.id} a={a} />
-          ))}
+        </div>
+        <section className="rounded-lg border p-4">
+          <h2 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Brief</h2>
+          <p className="mt-2 text-sm whitespace-pre-wrap">{task.brief}</p>
+          {task.acceptance_criteria ? (
+            <>
+              <h2 className="mt-4 text-xs font-medium tracking-wide text-muted-foreground uppercase">Acceptance</h2>
+              <p className="mt-2 text-sm whitespace-pre-wrap">{task.acceptance_criteria}</p>
+            </>
+          ) : null}
         </section>
-      )}
-      {outputs.length > 0 && (
-        <section className="space-y-2">
-          <h2 className="text-xs font-semibold uppercase text-neutral-500">Outputs</h2>
-          {outputs.map((a) => (
-            <ArtifactBlock key={a.id} a={a} />
-          ))}
-        </section>
-      )}
-
-      {notes.length > 0 && (
-        <section className="space-y-2">
-          <h2 className="text-xs font-semibold uppercase text-neutral-500">Handoff notes</h2>
-          {notes.map((n) => (
-            <div key={n.id} className="card text-sm">
-              <div className="mb-1 text-xs text-neutral-500">
-                {agentName(n.agent_id)} · {timeAgo(n.created_at)}
-              </div>
-              <p className="whitespace-pre-wrap">{n.summary}</p>
-              {n.decisions.length > 0 && (
-                <ul className="mt-2 list-disc pl-5 text-xs">
-                  {n.decisions.map((d, i) => (
-                    <li key={i}>{d}</li>
-                  ))}
-                </ul>
-              )}
-              {n.open_questions.length > 0 && (
-                <div className="mt-2 text-xs">
-                  <span className="font-medium">Open questions:</span> {n.open_questions.join(" · ")}
+        <section className="space-y-3">
+          <h2 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Timeline</h2>
+          {timeline.length === 0 ? <p className="text-sm text-muted-foreground">No handoffs, documents or tool calls yet.</p> : null}
+          {timeline.map((item, index) => (
+            <article key={`${item.kind}-${index}`} className="rounded-lg border p-3">
+              <div className="text-xs text-muted-foreground">{timeAgo(item.at)}</div>
+              {item.kind === "note" ? (
+                <div className="mt-1 text-sm">
+                  <div className="font-medium">{agentName(item.note.agent_id)} handed off</div>
+                  <p className="mt-1 whitespace-pre-wrap">{item.note.summary}</p>
+                  {item.note.suggested_next ? <p className="mt-2 text-xs text-muted-foreground">Next: {item.note.suggested_next}</p> : null}
                 </div>
-              )}
-              {n.suggested_next && <div className="mt-2 text-xs"><span className="font-medium">Suggested next:</span> {n.suggested_next}</div>}
-            </div>
+              ) : null}
+              {item.kind === "input" || item.kind === "output" ? <ArtifactBody artifact={item.artifact} label={item.kind === "input" ? "Input" : "Output"} /> : null}
+              {item.kind === "call" ? (
+                <div className="mt-1 text-sm">
+                  <span className="font-medium">{item.call.tool}</span>
+                  <span className="text-muted-foreground"> · {agentName(item.call.agent_id)} · {item.call.ok ? "ok" : "failed"}</span>
+                  {item.call.duration_ms != null ? <span className="text-muted-foreground"> · {item.call.duration_ms} ms</span> : null}
+                </div>
+              ) : null}
+            </article>
           ))}
         </section>
-      )}
-
-      {canComplete && (
-        <section className="card space-y-2">
-          <h2 className="text-xs font-semibold uppercase text-neutral-500">{task.is_human ? "Your action" : "Override"}</h2>
-          <textarea className="input" rows={3} placeholder="Note for the record (what you approved or decided)" value={summary} onChange={(e) => setSummary(e.target.value)} />
-          {error && <div className="text-sm text-red-600">{error}</div>}
-          <div className="flex gap-2">
-            <button className="btn btn-primary" disabled={busy} onClick={complete}>
-              <Check size={14} /> Mark done{task.loop_run_id ? " and advance loop" : ""}
-            </button>
-            <button className="btn" disabled={busy} onClick={cancel}>
+      </div>
+      {canAct ? (
+        <aside className="h-fit rounded-lg border p-4 lg:sticky lg:top-6">
+          <h2 className="text-sm font-medium">{task.is_human ? "Your decision" : "Override"}</h2>
+          <Textarea className="mt-3" value={summary} onChange={(event) => setSummary(event.target.value)} placeholder="Note for the record" />
+          {error ? <p className="mt-2 text-sm text-destructive">{error}</p> : null}
+          <div className="mt-3 grid gap-2">
+            <Button disabled={busy} onClick={() => void approve()}>
+              {task.loop_run_id ? "Approve and advance" : "Mark done"}
+            </Button>
+            <Button variant="outline" disabled={busy} onClick={() => setChangesOpen(true)}>
+              Request changes
+            </Button>
+            <Button variant="ghost" disabled={busy} onClick={() => void cancel()}>
               Cancel task
-            </button>
+            </Button>
           </div>
-        </section>
-      )}
+        </aside>
+      ) : null}
+      <ResponsiveDialog open={changesOpen} onOpenChange={setChangesOpen} title="Request changes" description="The task returns to the queue with your note.">
+        <Textarea value={summary} onChange={(event) => setSummary(event.target.value)} placeholder="What should change?" />
+        <Button className="mt-3 w-full" disabled={busy} onClick={() => void sendBack()}>
+          Send back
+        </Button>
+      </ResponsiveDialog>
     </div>
-  );
+  )
+}
+
+function ArtifactBody({ artifact, label }: { artifact: Artifact; label: string }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="mt-1">
+      <button type="button" className="flex min-h-11 w-full items-center justify-between text-left text-sm" onClick={() => setOpen((value) => !value)}>
+        <span>
+          {label}: {artifact.title} <span className="text-muted-foreground">v{artifact.version}</span>
+        </span>
+        <span className="text-xs text-muted-foreground">{open ? "Hide" : "Show"}</span>
+      </button>
+      {open ? <MarkdownView content={artifact.content ?? ""} /> : null}
+    </div>
+  )
 }

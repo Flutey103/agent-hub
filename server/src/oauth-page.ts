@@ -1,3 +1,4 @@
+import { productName } from "../../shared/brand.js";
 import { CAPABILITY_PRESETS } from "./capabilities.js";
 import { escapeHtml } from "./html.js";
 
@@ -16,29 +17,38 @@ export interface ConsentView {
 }
 
 const CSS = `
+  *, *::before, *::after { box-sizing: border-box; }
   :root { color-scheme: light dark; }
-  body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px;
-    background: #fafafa; color: #171717; font-family: ui-sans-serif, system-ui, sans-serif; }
-  .card { width: 100%; max-width: 28rem; background: #fff; border: 1px solid #e5e5e5; border-radius: 8px; padding: 24px; box-shadow: 0 1px 2px rgb(0 0 0 / 0.05); }
-  h1 { font-size: 1.125rem; margin: 0 0 8px; }
-  p, label { font-size: 0.875rem; line-height: 1.45; }
-  .muted { color: #737373; }
-  .warn { background: #fffbeb; color: #92400e; border-radius: 6px; padding: 8px 10px; }
+  html, body { max-width: 100%; overflow-x: hidden; }
+  body { margin: 0; min-height: 100vh; min-height: 100dvh; display: flex; align-items: center; justify-content: center; padding: 16px;
+    background: #fafafa; color: #18181b; font-family: ui-sans-serif, system-ui, sans-serif; }
+  .card { width: 100%; max-width: 28rem; background: #fff; border: 1px solid #e4e4e7; border-radius: 12px; padding: 20px; }
+  .brand { margin: 0 0 12px; font-size: 0.8125rem; font-weight: 600; }
+  h1 { font-size: 1.25rem; line-height: 1.25; margin: 0 0 8px; overflow-wrap: anywhere; }
+  p, label { font-size: 0.9375rem; line-height: 1.45; overflow-wrap: anywhere; }
+  .muted { color: #71717a; }
+  .warn { background: #fffbeb; color: #92400e; border-radius: 8px; padding: 10px 12px; }
   .error { color: #dc2626; }
   label { display: block; margin-top: 12px; }
-  label span { display: block; margin-bottom: 4px; color: #737373; font-size: 0.75rem; }
-  input, select { width: 100%; box-sizing: border-box; border: 1px solid #d4d4d4; background: #fff; color: inherit; border-radius: 6px; padding: 8px 12px; font: inherit; }
-  .actions { display: flex; gap: 8px; margin-top: 16px; }
-  button { font: inherit; border-radius: 6px; padding: 8px 12px; cursor: pointer; }
-  button.primary { background: #4f46e5; color: #fff; border: 1px solid #4f46e5; }
-  button.ghost { background: #fff; border: 1px solid #d4d4d4; }
-  code { font-size: 0.75rem; }
+  label span { display: block; margin-bottom: 6px; color: #71717a; font-size: 0.8125rem; }
+  input, select { width: 100%; min-height: 44px; border: 1px solid #d4d4d8; background: #fff; color: inherit; border-radius: 8px; padding: 10px 12px; font: inherit; font-size: 16px; }
+  select { padding-right: 2rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .actions { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
+  button { font: inherit; font-size: 0.9375rem; border-radius: 8px; min-height: 44px; padding: 10px 14px; cursor: pointer; width: 100%; }
+  button.primary { background: #18181b; color: #fafafa; border: 1px solid #18181b; }
+  button.ghost { background: #fff; border: 1px solid #d4d4d8; color: inherit; }
+  code { font-size: 0.75rem; overflow-wrap: anywhere; }
+  @media (min-width: 480px) {
+    .actions { flex-direction: row; }
+    button { width: auto; }
+  }
   @media (prefers-color-scheme: dark) {
-    body { background: #0a0a0a; color: #f5f5f5; }
-    .card { background: #171717; border-color: #262626; }
-    .muted { color: #a3a3a3; }
+    body { background: #09090b; color: #fafafa; }
+    .card { background: #18181b; border-color: #27272a; }
+    .muted { color: #a1a1aa; }
     .warn { background: #451a03; color: #fde68a; }
-    input, select, button.ghost { background: #171717; border-color: #404040; color: inherit; }
+    input, select, button.ghost { background: #09090b; border-color: #3f3f46; color: inherit; }
+    button.primary { background: #fafafa; color: #18181b; border-color: #fafafa; }
   }
 `;
 
@@ -65,7 +75,7 @@ export function renderConsentPage(view: ConsentView): string {
     view.mode === "login"
       ? `
         ${clientBlurb(view)}
-        <p class="muted">Sign in with your Agent Hub account to choose a workspace.</p>
+        <p class="muted">Sign in with your ${escapeHtml(productName)} account to choose a workspace.</p>
         <form method="post">
           <input type="hidden" name="handle" value="${escapeHtml(view.handle)}">
           <input type="hidden" name="action" value="login">
@@ -91,7 +101,7 @@ export function renderConsentPage(view: ConsentView): string {
             <select name="preset">
               ${CAPABILITY_PRESETS.map(
                 (preset) =>
-                  `<option value="${escapeHtml(preset.id)}"${preset.id === "all" ? " selected" : ""}>${escapeHtml(preset.label)} — ${escapeHtml(preset.description)}</option>`,
+                  `<option value="${escapeHtml(preset.id)}"${preset.id === "all" ? " selected" : ""}>${escapeHtml(preset.label)}</option>`,
               ).join("")}
             </select>
           </label>
@@ -104,11 +114,11 @@ export function renderConsentPage(view: ConsentView): string {
   return `<!doctype html>
 <html lang="en">
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="referrer" content="no-referrer">
-<title>Connect an agent</title>
+<title>Connect an agent · ${escapeHtml(productName)}</title>
 <style>${CSS}</style>
-<body><main class="card">${body}</main></body>
+<body><main class="card"><p class="brand">${escapeHtml(productName)}</p>${body}</main></body>
 </html>`;
 }
 
@@ -116,8 +126,8 @@ export function renderMessagePage(title: string, message: string): string {
   return `<!doctype html>
 <html lang="en">
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escapeHtml(title)}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>${escapeHtml(title)} · ${escapeHtml(productName)}</title>
 <style>${CSS}</style>
 <body><main class="card"><h1>${escapeHtml(title)}</h1><p>${escapeHtml(message)}</p></main></body>
 </html>`;

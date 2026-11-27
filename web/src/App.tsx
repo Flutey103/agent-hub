@@ -1,75 +1,127 @@
-import type { Session } from "@supabase/supabase-js";
-import { useEffect, useState } from "react";
-import { Navigate, Route, Routes } from "react-router-dom";
-import Layout from "./components/Layout";
-import { useRealtime } from "./lib/queries";
-import { supabase, supabaseConfigured } from "./lib/supabase";
-import { WorkspaceProvider } from "./lib/workspace";
-import Activity from "./pages/Activity";
-import Agents from "./pages/Agents";
-import Artifacts from "./pages/Artifacts";
-import Board from "./pages/Board";
-import Inbox from "./pages/Inbox";
-import Login from "./pages/Login";
-import Loops from "./pages/Loops";
-import NewTask from "./pages/NewTask";
-import TaskDetail from "./pages/TaskDetail";
+import { Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom"
+import { AppShell } from "@/components/app-shell"
+import { AuthProvider, useAuth } from "@/lib/auth"
+import { useRealtime } from "@/lib/queries"
+import { supabaseConfigured } from "@/lib/supabase"
+import { WorkspaceProvider } from "@/lib/workspace"
+import ActivityPage from "@/pages/Activity"
+import AgentsPage from "@/pages/Agents"
+import ForgotPasswordPage from "@/pages/ForgotPassword"
+import HomePage from "@/pages/Home"
+import InboxPage from "@/pages/Inbox"
+import KnowledgePage from "@/pages/Knowledge"
+import LandingPage from "@/pages/Landing"
+import { LoadingScreen } from "@/pages/LoadingScreen"
+import LoginPage from "@/pages/Login"
+import NewTaskPage from "@/pages/NewTask"
+import ResetPasswordPage from "@/pages/ResetPassword"
+import SettingsPage from "@/pages/Settings"
+import SignUpPage from "@/pages/SignUp"
+import TaskDetailPage from "@/pages/TaskDetail"
+import TasksPage from "@/pages/Tasks"
+import WorkflowEditorPage from "@/pages/WorkflowEditor"
+import WorkflowsPage from "@/pages/Workflows"
 
-function AuthedRoutes() {
-  useRealtime();
+function appRoutes() {
   return (
-    <Layout>
-      <Routes>
-        <Route path="/" element={<Board />} />
-        <Route path="/inbox" element={<Inbox />} />
-        <Route path="/tasks/new" element={<NewTask />} />
-        <Route path="/tasks/:id" element={<TaskDetail />} />
-        <Route path="/agents" element={<Agents />} />
-        <Route path="/artifacts" element={<Artifacts />} />
-        <Route path="/loops" element={<Loops />} />
-        <Route path="/activity" element={<Activity />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </Layout>
-  );
+    <>
+      <Route path="home" element={<HomePage />} />
+      <Route path="inbox" element={<InboxPage />} />
+      <Route path="tasks/new" element={<NewTaskPage />} />
+      <Route path="tasks/:id" element={<TaskDetailPage />} />
+      <Route path="tasks" element={<TasksPage />} />
+      <Route path="workflows/new" element={<WorkflowEditorPage />} />
+      <Route path="workflows/:id" element={<WorkflowEditorPage />} />
+      <Route path="workflows" element={<WorkflowsPage />} />
+      <Route path="knowledge/facts" element={<KnowledgePage view="facts" />} />
+      <Route path="knowledge" element={<KnowledgePage view="documents" />} />
+      <Route path="agents" element={<AgentsPage />} />
+      <Route path="activity" element={<ActivityPage />} />
+      <Route path="settings" element={<SettingsPage />} />
+    </>
+  )
 }
 
-function Authed({ session }: { session: Session }) {
+function LandingGate() {
+  const { ready, session, recovery } = useAuth()
+  if (!ready) return <LoadingScreen />
+  if (recovery) return <Navigate to="/reset-password" replace />
+  if (session) return <Navigate to="/home" replace />
+  return <LandingPage />
+}
+
+function RequireAuth() {
+  const { ready, session, recovery } = useAuth()
+  const location = useLocation()
+  if (!ready) return <LoadingScreen />
+  if (recovery) return <Navigate to="/reset-password" replace />
+  if (!session) return <Navigate to={`/login?next=${encodeURIComponent(location.pathname + location.search)}`} replace />
+  return <Outlet />
+}
+
+function AuthedLayout() {
+  const { session } = useAuth()
+  if (!session) return null
   return (
     <WorkspaceProvider session={session}>
-      <AuthedRoutes />
+      <AuthedFrame />
     </WorkspaceProvider>
-  );
+  )
 }
 
-function MissingSupabaseConfig() {
+function AuthedFrame() {
+  useRealtime()
   return (
-    <div className="flex min-h-screen items-center justify-center p-6">
-      <div className="card w-full max-w-md space-y-2 p-6">
-        <h1 className="text-lg font-semibold">Agent Hub</h1>
-        <p className="text-sm text-neutral-600 dark:text-neutral-300">
-          This build has no Supabase browser credentials. Set <code className="rounded bg-neutral-100 px-1 dark:bg-neutral-800">VITE_SUPABASE_URL</code> and{" "}
-          <code className="rounded bg-neutral-100 px-1 dark:bg-neutral-800">VITE_SUPABASE_ANON_KEY</code> and run the web build again.
-        </p>
-        <p className="text-sm text-neutral-500">The API and MCP endpoint on this origin do not use those keys. They stay in the browser bundle only.</p>
-      </div>
-    </div>
-  );
+    <AppShell>
+      <Outlet />
+    </AppShell>
+  )
 }
 
-function SessionApp() {
-  const [session, setSession] = useState<Session | null | undefined>(undefined);
-  useEffect(() => {
-    void supabase.auth.getSession().then(({ data }) => setSession(data.session));
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
-    return () => sub.subscription.unsubscribe();
-  }, []);
-  if (session === undefined) return <div className="p-8 text-sm text-neutral-500">Loading…</div>;
-  if (!session) return <Login />;
-  return <Authed session={session} />;
+function PreviewLayout() {
+  return (
+    <WorkspaceProvider demo>
+      <AppShell>
+        <Outlet />
+      </AppShell>
+    </WorkspaceProvider>
+  )
+}
+
+function ShellRoutes({ signedIn }: { signedIn: boolean }) {
+  return (
+    <Routes>
+      <Route path="/" element={signedIn ? <LandingGate /> : <LandingPage />} />
+      <Route path="/login" element={<LoginPage />} />
+      <Route path="/signup" element={<SignUpPage />} />
+      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+      <Route path="/reset-password" element={<ResetPasswordPage />} />
+      <Route path="/preview" element={<PreviewLayout />}>
+        <Route index element={<Navigate to="home" replace />} />
+        {appRoutes()}
+        <Route path="*" element={<Navigate to="/preview/home" replace />} />
+      </Route>
+      <Route path="/artifacts" element={<Navigate to="/knowledge" replace />} />
+      <Route path="/loops" element={<Navigate to="/workflows" replace />} />
+      {signedIn ? (
+        <Route element={<RequireAuth />}>
+          <Route element={<AuthedLayout />}>
+            {appRoutes()}
+            <Route path="*" element={<Navigate to="/home" replace />} />
+          </Route>
+        </Route>
+      ) : (
+        <Route path="*" element={<Navigate to="/login" replace />} />
+      )}
+    </Routes>
+  )
 }
 
 export default function App() {
-  if (!supabaseConfigured) return <MissingSupabaseConfig />;
-  return <SessionApp />;
+  if (!supabaseConfigured) return <ShellRoutes signedIn={false} />
+  return (
+    <AuthProvider>
+      <ShellRoutes signedIn />
+    </AuthProvider>
+  )
 }

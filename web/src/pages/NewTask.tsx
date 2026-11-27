@@ -1,115 +1,130 @@
-import { useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState, type FormEvent } from "react";
-import { useNavigate } from "react-router-dom";
-import { useAgents, useArtifacts } from "../lib/queries";
-import { supabase } from "../lib/supabase";
-import { useWorkspace } from "../lib/workspace";
+import { useQueryClient } from "@tanstack/react-query"
+import { useMemo, useState, type FormEvent } from "react"
+import { useNavigate } from "react-router-dom"
+import { productName } from "../../../shared/brand"
+import { Button } from "@/components/ui/button"
+import { Field, Input, Textarea } from "@/components/ui/input"
+import { Select } from "@/components/ui/menu"
+import { PageHeader } from "@/components/ui-bits"
+import { useAgents, useArtifacts } from "@/lib/queries"
+import { supabase } from "@/lib/supabase"
+import { usePreviewLock } from "@/lib/task-actions"
+import { usePageTitle } from "@/lib/utils"
+import { usePaths, useWorkspace } from "@/lib/workspace"
 
-export default function NewTask() {
-  const navigate = useNavigate();
-  const qc = useQueryClient();
-  const { workspaceId } = useWorkspace();
-  const { data: agents = [] } = useAgents();
-  const { data: artifacts = [] } = useArtifacts();
-  const capabilities = useMemo(() => Array.from(new Set(agents.flatMap((a) => a.capabilities))).sort(), [agents]);
-  const artifactKeys = useMemo(() => Array.from(new Set(artifacts.map((a) => a.key))).sort(), [artifacts]);
+export default function NewTaskPage() {
+  usePageTitle(`New task — ${productName}`)
+  const navigate = useNavigate()
+  const paths = usePaths()
+  const qc = useQueryClient()
+  const { workspaceId } = useWorkspace()
+  const locked = usePreviewLock()
+  const { data: agents = [] } = useAgents()
+  const { data: artifacts = [] } = useArtifacts()
+  const capabilities = useMemo(() => Array.from(new Set(agents.flatMap((agent) => agent.capabilities))).sort(), [agents])
+  const artifactKeys = useMemo(() => Array.from(new Set(artifacts.map((artifact) => artifact.key))).sort(), [artifacts])
+  const [title, setTitle] = useState("")
+  const [brief, setBrief] = useState("")
+  const [acceptance, setAcceptance] = useState("")
+  const [route, setRoute] = useState("any")
+  const [priority, setPriority] = useState("3")
+  const [reviewBy, setReviewBy] = useState("none")
+  const [inputs, setInputs] = useState<string[]>([])
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
 
-  const [title, setTitle] = useState("");
-  const [brief, setBrief] = useState("");
-  const [acceptance, setAcceptance] = useState("");
-  const [route, setRoute] = useState<string>("cap:");
-  const [priority, setPriority] = useState(3);
-  const [reviewBy, setReviewBy] = useState("");
-  const [inputs, setInputs] = useState<string[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const routeOptions = [
+    { value: "any", label: "Any assistant" },
+    { value: "human", label: "Me" },
+    ...capabilities.map((capability) => ({ value: `cap:${capability}`, label: capability, group: "By capability" })),
+    ...agents.map((agent) => ({ value: `agent:${agent.id}`, label: agent.name, group: "Specific assistant" })),
+  ]
 
-  async function submit(e: FormEvent) {
-    e.preventDefault();
-    setBusy(true);
-    setError(null);
+  async function submit(event: FormEvent) {
+    event.preventDefault()
+    if (locked("Creating a task")) return
+    setBusy(true)
+    setError(null)
     const inputIds = inputs
-      .map((key) => artifacts.filter((a) => a.key === key).sort((a, b) => b.version - a.version)[0]?.id)
-      .filter((x): x is string => !!x);
-    const [kind, value] = route.split(":", 2);
+      .map((key) => artifacts.filter((artifact) => artifact.key === key).sort((a, b) => b.version - a.version)[0]?.id)
+      .filter((id): id is string => Boolean(id))
     const row = {
       workspace_id: workspaceId,
       title,
       brief,
       acceptance_criteria: acceptance || null,
-      priority,
-      assignee_capability: kind === "cap" && value ? value : null,
-      assignee_agent_id: kind === "agent" ? value : null,
-      is_human: kind === "human",
-      status: kind === "human" ? "awaiting_human" : "queued",
-      review_by_capability: reviewBy || null,
+      priority: Number(priority),
+      assignee_capability: route.startsWith("cap:") ? route.slice(4) : null,
+      assignee_agent_id: route.startsWith("agent:") ? route.slice(6) : null,
+      is_human: route === "human",
+      status: route === "human" ? "awaiting_human" : "queued",
+      review_by_capability: reviewBy === "none" ? null : reviewBy,
       input_artifact_ids: inputIds,
-    };
-    const { data, error } = await supabase.from("tasks").insert(row).select("id").single();
-    if (error) {
-      setError(error.message);
-      setBusy(false);
-      return;
     }
-    await supabase.from("activity").insert({ workspace_id: workspaceId, task_id: data.id, event: "created", detail: { by: "human" } });
-    await qc.invalidateQueries({ queryKey: ["tasks"] });
-    navigate(`/tasks/${data.id}`);
+    const { data, error: insertError } = await supabase.from("tasks").insert(row).select("id").single()
+    if (insertError || !data) {
+      setError(insertError?.message ?? "Could not create the task")
+      setBusy(false)
+      return
+    }
+    await supabase.from("activity").insert({ workspace_id: workspaceId, task_id: data.id, event: "created", detail: { by: "human" } })
+    await qc.invalidateQueries({ queryKey: ["tasks"] })
+    navigate(paths.task(data.id as string))
+  }
+
+  function toggleKey(key: string) {
+    setInputs((current) => (current.includes(key) ? current.filter((item) => item !== key) : [...current, key]))
   }
 
   return (
-    <form onSubmit={submit} className="max-w-2xl space-y-3">
-      <h1 className="text-xl font-semibold">New task</h1>
-      <input className="input" placeholder="Title" value={title} onChange={(e) => setTitle(e.target.value)} required />
-      <textarea className="input" rows={6} placeholder="Brief: what to do, with enough context for an agent that has never seen this before" value={brief} onChange={(e) => setBrief(e.target.value)} required />
-      <textarea className="input" rows={3} placeholder="Acceptance criteria (optional): how the agent or reviewer knows it is done" value={acceptance} onChange={(e) => setAcceptance(e.target.value)} />
-      <div className="grid grid-cols-2 gap-3">
-        <label className="text-sm">
-          <span className="mb-1 block text-xs text-neutral-500">Route to</span>
-          <select className="input" value={route} onChange={(e) => setRoute(e.target.value)}>
-            <option value="cap:">Any agent</option>
-            <optgroup label="By capability">
-              {capabilities.map((c) => (
-                <option key={c} value={`cap:${c}`}>{c}</option>
-              ))}
-            </optgroup>
-            <optgroup label="Specific agent">
-              {agents.map((a) => (
-                <option key={a.id} value={`agent:${a.id}`}>{a.name}</option>
-              ))}
-            </optgroup>
-            <option value="human:">A human (me)</option>
-          </select>
-        </label>
-        <label className="text-sm">
-          <span className="mb-1 block text-xs text-neutral-500">Priority (1 highest)</span>
-          <select className="input" value={priority} onChange={(e) => setPriority(Number(e.target.value))}>
-            {[1, 2, 3, 4, 5].map((p) => (
-              <option key={p} value={p}>P{p}</option>
-            ))}
-          </select>
-        </label>
-        <label className="text-sm">
-          <span className="mb-1 block text-xs text-neutral-500">Review by capability (optional)</span>
-          <select className="input" value={reviewBy} onChange={(e) => setReviewBy(e.target.value)}>
-            <option value="">No review</option>
-            {capabilities.map((c) => (
-              <option key={c} value={c}>{c}</option>
-            ))}
-          </select>
-        </label>
-        <label className="text-sm">
-          <span className="mb-1 block text-xs text-neutral-500">Attach artifacts (latest version)</span>
-          <select className="input h-28" multiple value={inputs} onChange={(e) => setInputs(Array.from(e.target.selectedOptions).map((o) => o.value))}>
-            {artifactKeys.map((k) => (
-              <option key={k} value={k}>{k}</option>
-            ))}
-          </select>
-        </label>
+    <form onSubmit={submit} className="mx-auto max-w-2xl space-y-3">
+      <PageHeader title="New task" description="Write it so an assistant that has never seen this business can do the work." />
+      <Field label="Title">
+        <Input value={title} onChange={(event) => setTitle(event.target.value)} required />
+      </Field>
+      <Field label="Brief">
+        <Textarea value={brief} onChange={(event) => setBrief(event.target.value)} required />
+      </Field>
+      <Field label="Acceptance" hint="Optional. How you or a reviewer will know it is done.">
+        <Textarea value={acceptance} onChange={(event) => setAcceptance(event.target.value)} />
+      </Field>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label="Route to">
+          <Select value={route} onValueChange={setRoute} options={routeOptions} />
+        </Field>
+        <Field label="Priority">
+          <Select
+            value={priority}
+            onValueChange={setPriority}
+            options={[
+              { value: "1", label: "P1 · Urgent" },
+              { value: "2", label: "P2 · High" },
+              { value: "3", label: "P3 · Normal" },
+              { value: "4", label: "P4 · Low" },
+              { value: "5", label: "P5 · Lowest" },
+            ]}
+          />
+        </Field>
       </div>
-      {error && <div className="text-sm text-red-600">{error}</div>}
-      <button className="btn btn-primary" disabled={busy}>
+      <Field label="Review by" hint="Optional. Another capability checks the result.">
+        <Select value={reviewBy} onValueChange={setReviewBy} options={[{ value: "none", label: "No review" }, ...capabilities.map((capability) => ({ value: capability, label: capability }))]} />
+      </Field>
+      {artifactKeys.length > 0 ? (
+        <fieldset className="space-y-2">
+          <legend className="text-sm font-medium">Attach documents</legend>
+          <div className="grid gap-2">
+            {artifactKeys.map((key) => (
+              <button key={key} type="button" aria-pressed={inputs.includes(key)} onClick={() => toggleKey(key)} className={`min-h-11 rounded-md border px-3 text-left text-sm ${inputs.includes(key) ? "border-foreground" : ""}`}>
+                {key}
+              </button>
+            ))}
+          </div>
+        </fieldset>
+      ) : null}
+      {error ? <p className="text-sm text-destructive">{error}</p> : null}
+      <Button type="submit" className="w-full sm:w-auto" disabled={busy}>
         {busy ? "Creating…" : "Create task"}
-      </button>
+      </Button>
     </form>
-  );
+  )
 }
