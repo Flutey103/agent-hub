@@ -55,14 +55,51 @@ function sessionCookie(token: string, request: Request): string {
 
 const MAX_ACCESS_TOKEN_LENGTH = 8192;
 
-/** Same-origin form posts only. A cross-site page must not be able to plant a session cookie. */
-export function isSameOriginConsentPost(request: Request): boolean {
-  const expected = new URL(request.url).origin;
-  const origin = request.headers.get("origin");
-  if (!origin || origin !== expected) return false;
+/**
+ * Cookie name from @cloudflare/workers-oauth-provider: `__Host-oauth-` + `consent` + `-` + the
+ * first 16 hex chars of the SHA-256 of the consent handle. The value is the full hash.
+ */
+const CONSENT_COOKIE_PREFIX = "__Host-oauth-consent-";
+
+/**
+ * Header check for the session handoff. Referrer-Policy is no-referrer, and the Fetch standard
+ * then sends `Origin: null` on this POST, so a missing or null Origin is not a cross-site request.
+ * A concrete Origin that belongs to another site is still rejected, as is Sec-Fetch-Site: cross-site.
+ * The consent binding cookie is the CSRF check.
+ */
+export function sessionPostHeadersAllowed(request: Request): boolean {
   const site = request.headers.get("sec-fetch-site");
-  if (site !== null && site !== "same-origin") return false;
-  return true;
+  if (site === "cross-site") return false;
+  const origin = request.headers.get("origin");
+  if (origin && origin !== "null") {
+    try {
+      if (origin !== new URL(request.url).origin) return false;
+    } catch {
+      return false;
+    }
+  }
+  return site === null || site === "same-origin" || site === "same-site" || site === "none";
+}
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let difference = 0;
+  for (let index = 0; index < a.length; index += 1) difference |= a.charCodeAt(index) ^ b.charCodeAt(index);
+  return difference === 0;
+}
+
+/** True when this browser holds the __Host- cookie beginConsent set for this handle. */
+export async function consentHandleBoundToBrowser(request: Request, handle: string): Promise<boolean> {
+  if (!handle) return false;
+  const hash = await sha256Hex(handle);
+  const cookie = readCookie(request, `${CONSENT_COOKIE_PREFIX}${hash.slice(0, 16)}`);
+  if (!cookie) return false;
+  return timingSafeEqual(cookie, hash);
 }
 
 export function postedAccessToken(value: unknown): string | null {
@@ -72,10 +109,13 @@ export function postedAccessToken(value: unknown): string | null {
   return token;
 }
 
-function rejectionKind(error: { status?: number } | null): "invalid" | "error" {
+function rejectionKind(error: { status?: number; message?: string } | null): "invalid" | "error" {
   if (!error) return "invalid";
-  if (error.status === 400 || error.status === 401 || error.status === 403) return "invalid";
-  return "error";
+  const status = error.status ?? 0;
+  if (status >= 500) return "error";
+  const message = (error.message ?? "").toLowerCase();
+  if (status === 0 && (message.includes("fetch") || message.includes("network") || message.includes("timeout"))) return "error";
+  return "invalid";
 }
 
 async function readSession(request: Request): Promise<SessionUser | null> {
@@ -251,7 +291,8 @@ async function passwordLogin(request: Request, oauth: OAuthHelpers, form: FormDa
  * The web app keeps the Supabase session in localStorage, which this
  * server-rendered page cannot see. The browser posts the access token and
  * Supabase verifies it before ah_session is set. Approve still checks
- * workspace membership. The OAuth handle has to come from this page.
+ * workspace membership. The consent handle must match the __Host- cookie from
+ * this page. Origin may be the string "null" because the page sends no referrer.
  */
 async function acceptBrowserSession(request: Request, oauth: OAuthHelpers, form: FormData, handle: string): Promise<Response> {
   const { details, base } = await consentContext(request, oauth);
@@ -259,8 +300,19 @@ async function acceptBrowserSession(request: Request, oauth: OAuthHelpers, form:
     const view = await viewFor(null, details.clientName, handle, base, message, rejection);
     return html(renderConsentPage(view));
   };
-  if (!isSameOriginConsentPost(request)) {
-    return html(renderMessagePage("Sign in required", "Start the connection again from your client."), undefined, 403);
+  if (!sessionPostHeadersAllowed(request)) {
+    return html(
+      renderMessagePage("Approval could not be confirmed", "This request did not come from the approval page. Start the connection again from your client."),
+      undefined,
+      403,
+    );
+  }
+  if (!(await consentHandleBoundToBrowser(request, handle))) {
+    return html(
+      renderMessagePage("Approval expired", "This browser did not start the connection, or it expired. Start again from your client."),
+      undefined,
+      400,
+    );
   }
   const token = postedAccessToken(form.get("access_token"));
   if (!token) return fail("That sign-in expired. Sign in again.", "invalid");
