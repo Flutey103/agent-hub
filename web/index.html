@@ -21,6 +21,14 @@
         var dark = stored === "dark" || ((!stored || stored === "system") && matchMedia("(prefers-color-scheme: dark)").matches);
         if (dark) document.documentElement.classList.add("dark");
       } catch (e) {}
+      try {
+        var params = new URLSearchParams(location.search);
+        var fragment = new URLSearchParams(location.hash.replace(/^#/, ""));
+        var recovery = params.get("type") === "recovery" || fragment.get("type") === "recovery";
+        if (!recovery && (params.has("code") || fragment.has("access_token") || fragment.get("type") === "magiclink")) {
+          sessionStorage.setItem("ah_auth_callback", "1");
+        }
+      } catch (e) {}
     </script>
   </head>
   <body>

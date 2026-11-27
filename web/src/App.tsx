@@ -1,6 +1,8 @@
+import { useLayoutEffect } from "react"
 import { Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom"
 import { AppShell } from "@/components/app-shell"
 import { AuthProvider, useAuth } from "@/lib/auth"
+import { commitAuthorizeResume, peekAuthorizeResume } from "@/lib/oauth-return"
 import { useRealtime } from "@/lib/queries"
 import { supabaseConfigured } from "@/lib/supabase"
 import { WorkspaceProvider } from "@/lib/workspace"
@@ -117,11 +119,24 @@ function ShellRoutes({ signedIn }: { signedIn: boolean }) {
   )
 }
 
+function SessionRoutes() {
+  const { ready, session, recovery } = useAuth()
+  const location = useLocation()
+  const resume = ready && session && !recovery ? peekAuthorizeResume(location.search, location.hash) : undefined
+  useLayoutEffect(() => {
+    if (!resume?.callback) return
+    commitAuthorizeResume()
+    if (resume.target) window.location.replace(resume.target)
+  }, [resume])
+  if (resume?.target) return <LoadingScreen />
+  return <ShellRoutes signedIn />
+}
+
 export default function App() {
   if (!supabaseConfigured) return <ShellRoutes signedIn={false} />
   return (
     <AuthProvider>
-      <ShellRoutes signedIn />
+      <SessionRoutes />
     </AuthProvider>
   )
 }

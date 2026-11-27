@@ -67,7 +67,7 @@ The key is printed once; only its SHA-256 hash is stored. Revoking it from the A
 
 ## Connecting agents
 
-**Claude, ChatGPT, or grok.com as a connector.** Paste the MCP URL (`https://<host>/mcp`) into the client's custom connector form. The client discovers OAuth, sends you to `/authorize`, and you sign in with your Agent Hub account, pick a workspace, name the agent (prefilled from the client name), and approve. That registers a new agent in the workspace. The capability preset defaults to all capabilities. Static `Authorization: Bearer ah_...` keys still work on `/mcp` and on `/api/tools/*` for headless agents and the Grok API.
+**Claude, ChatGPT, or grok.com as a connector.** Paste the MCP URL (`https://<host>/mcp`) into the client's custom connector form. The client discovers OAuth and sends you to `/authorize`. If you are already signed in on this site, the page skips the password form and shows the consent screen: pick a workspace, name the agent (prefilled from the client name), and approve. Otherwise sign in with a password or an email link. The link returns to the same `/authorize` request, which matters when the account has no password. Approving registers a new agent in the workspace. The capability preset defaults to all capabilities. Static `Authorization: Bearer ah_...` keys still work on `/mcp` and on `/api/tools/*` for headless agents and the Grok API. The approval page loads `/oauth-session.js` from the built UI, so it uses the same public Supabase settings as the app.
 
 The approval cookies the OAuth library sets are `__Host-` cookies, so the consent step needs HTTPS. Use the deployed `https://` origin for a real connector. `wrangler dev` on `http://127.0.0.1` can still serve the API and the board.
 

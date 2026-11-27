@@ -20,8 +20,45 @@ function brandHtml(): Plugin {
   };
 }
 
+function oauthSessionDev(): Plugin {
+  return {
+    name: "oauth-session-dev",
+    apply: "serve",
+    configureServer(server) {
+      server.middlewares.use(async (req, res, next) => {
+        const pathname = req.url?.split("?")[0];
+        if (pathname !== "/oauth-session.js") return next();
+        try {
+          const loaded = await server.transformRequest("/src/oauth-session.ts");
+          if (!loaded) return next();
+          res.statusCode = 200;
+          res.setHeader("Content-Type", "text/javascript");
+          res.setHeader("Cache-Control", "no-store");
+          res.end(loaded.code);
+        } catch (error) {
+          res.statusCode = 500;
+          res.end(error instanceof Error ? error.message : "oauth session script failed");
+        }
+      });
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react(), tailwindcss(), brandHtml()],
+  plugins: [react(), tailwindcss(), brandHtml(), oauthSessionDev()],
+  build: {
+    rollupOptions: {
+      input: {
+        main: path.resolve(root, "index.html"),
+        "oauth-session": path.resolve(root, "src/oauth-session.ts"),
+      },
+      output: {
+        entryFileNames: (chunk) => (chunk.name === "oauth-session" ? "oauth-session.js" : "assets/[name]-[hash].js"),
+        chunkFileNames: "assets/[name]-[hash].js",
+        assetFileNames: "assets/[name]-[hash][extname]",
+      },
+    },
+  },
   resolve: { alias: { "@": path.resolve(root, "src") } },
   envDir: "..",
   server: {

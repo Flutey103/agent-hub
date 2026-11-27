@@ -2,7 +2,8 @@
  * OAuth approval for MCP connectors. The provider validates the request,
  * PKCE, and the client. This page signs the user in with Supabase, lets them
  * pick a workspace and an agent name, then stores the new agent id in the
- * token props.
+ * token props. A browser that already has a Supabase session posts that
+ * access token from /oauth-session.js; it is verified before ah_session is set.
  */
 import { AuthorizationError, CimdFetchError, type OAuthHelpers } from "@cloudflare/workers-oauth-provider";
 import { createClient } from "@supabase/supabase-js";
@@ -50,6 +51,31 @@ function readCookie(request: Request, name: string): string | null {
 function sessionCookie(token: string, request: Request): string {
   const secure = new URL(request.url).protocol === "https:";
   return `${SESSION_COOKIE}=${encodeURIComponent(token)}; HttpOnly; Path=/; SameSite=Lax; Max-Age=3600${secure ? "; Secure" : ""}`;
+}
+
+const MAX_ACCESS_TOKEN_LENGTH = 8192;
+
+/** Same-origin form posts only. A cross-site page must not be able to plant a session cookie. */
+export function isSameOriginConsentPost(request: Request): boolean {
+  const expected = new URL(request.url).origin;
+  const origin = request.headers.get("origin");
+  if (!origin || origin !== expected) return false;
+  const site = request.headers.get("sec-fetch-site");
+  if (site !== null && site !== "same-origin") return false;
+  return true;
+}
+
+export function postedAccessToken(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const token = value.trim();
+  if (!token || token.length > MAX_ACCESS_TOKEN_LENGTH || /\s/.test(token)) return null;
+  return token;
+}
+
+function rejectionKind(error: { status?: number } | null): "invalid" | "error" {
+  if (!error) return "invalid";
+  if (error.status === 400 || error.status === 401 || error.status === 403) return "invalid";
+  return "error";
 }
 
 async function readSession(request: Request): Promise<SessionUser | null> {
@@ -113,10 +139,11 @@ async function viewFor(
   user: SessionUser | null,
   clientName: string,
   handle: string,
-  base: Omit<ConsentView, "handle" | "mode" | "email" | "workspaces" | "agentName">,
+  base: Omit<ConsentView, "handle" | "mode" | "email" | "workspaces" | "agentName" | "sessionRejected">,
   error?: string,
+  sessionRejected?: ConsentView["sessionRejected"],
 ): Promise<ConsentView> {
-  if (!user) return { ...base, handle, mode: "login", error };
+  if (!user) return { ...base, handle, mode: "login", error, sessionRejected };
   const workspaces = await membershipsFor(user.id);
   return {
     ...base,
@@ -129,49 +156,7 @@ async function viewFor(
   };
 }
 
-async function submitConsent(request: Request, oauth: OAuthHelpers): Promise<Response> {
-  const form = await request.formData();
-  const action = String(form.get("action") ?? "");
-  const handle = String(form.get("handle") ?? "");
-  if (!handle) return html(renderMessagePage("Approval expired", "Start the connection again from your client."), undefined, 400);
-
-  if (action === "login") {
-    const email = String(form.get("email") ?? "").trim();
-    const password = String(form.get("password") ?? "");
-    const oauthRequest = await oauth.parseAuthRequest(request);
-    const details = await oauth.describeConsent(oauthRequest);
-    const base = {
-      clientName: details.clientName,
-      clientDomain: details.clientDomain,
-      redirectHost: details.redirectHost,
-      redirectIsLoopback: details.redirectIsLoopback,
-      scope: grantedScope(details.scope),
-    };
-    // A fresh client: signInWithPassword stores a user session on the client it
-    // is called on, and the shared service-role client must not pick that up.
-    const authClient = createClient(env.supabaseUrl, env.supabaseServiceRoleKey, {
-      auth: { persistSession: false, autoRefreshToken: false },
-    });
-    const signedIn = await authClient.auth.signInWithPassword({ email, password });
-    if (signedIn.error || !signedIn.data.session || !signedIn.data.user) {
-      const view = await viewFor(null, details.clientName, handle, base, signedIn.error?.message ?? "Sign-in failed");
-      return html(renderConsentPage(view));
-    }
-    const user = { id: signedIn.data.user.id, email: signedIn.data.user.email ?? null };
-    const view = await viewFor(user, details.clientName, handle, base);
-    const headers = new Headers();
-    headers.append("set-cookie", sessionCookie(signedIn.data.session.access_token, request));
-    return html(renderConsentPage(view), headers);
-  }
-
-  if (action === "deny") {
-    const denied = await oauth.denyConsent(request, handle);
-    return new Response(null, { status: 302, headers: denied.headers });
-  }
-
-  const user = await readSession(request);
-  if (!user) return html(renderMessagePage("Sign in required", "The approval page expired. Start again from your client."), undefined, 401);
-
+async function consentContext(request: Request, oauth: OAuthHelpers) {
   const oauthRequest = await oauth.parseAuthRequest(request);
   const details = await oauth.describeConsent(oauthRequest);
   const base = {
@@ -181,6 +166,27 @@ async function submitConsent(request: Request, oauth: OAuthHelpers): Promise<Res
     redirectIsLoopback: details.redirectIsLoopback,
     scope: grantedScope(details.scope),
   };
+  return { oauthRequest, details, base };
+}
+
+async function submitConsent(request: Request, oauth: OAuthHelpers): Promise<Response> {
+  const form = await request.formData();
+  const action = String(form.get("action") ?? "");
+  const handle = String(form.get("handle") ?? "");
+  if (!handle) return html(renderMessagePage("Approval expired", "Start the connection again from your client."), undefined, 400);
+
+  if (action === "login") return passwordLogin(request, oauth, form, handle);
+  if (action === "session") return acceptBrowserSession(request, oauth, form, handle);
+
+  if (action === "deny") {
+    const denied = await oauth.denyConsent(request, handle);
+    return new Response(null, { status: 302, headers: denied.headers });
+  }
+
+  const user = await readSession(request);
+  if (!user) return html(renderMessagePage("Sign in required", "The approval page expired. Start again from your client."), undefined, 401);
+
+  const { oauthRequest, details, base } = await consentContext(request, oauth);
   const owned = await membershipsFor(user.id);
   const workspaceId = String(form.get("workspace_id") ?? "");
   const preset = String(form.get("preset") ?? "all");
@@ -217,5 +223,62 @@ async function submitConsent(request: Request, oauth: OAuthHelpers): Promise<Res
   } catch (error) {
     if (agentId) await deleteAgent(agentId, workspaceId).catch(() => {});
     throw error;
+  }
+}
+
+async function passwordLogin(request: Request, oauth: OAuthHelpers, form: FormData, handle: string): Promise<Response> {
+  const email = String(form.get("email") ?? "").trim();
+  const password = String(form.get("password") ?? "");
+  const { details, base } = await consentContext(request, oauth);
+  // A fresh client: signInWithPassword stores a user session on the client it
+  // is called on, and the shared service-role client must not pick that up.
+  const authClient = createClient(env.supabaseUrl, env.supabaseServiceRoleKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const signedIn = await authClient.auth.signInWithPassword({ email, password });
+  if (signedIn.error || !signedIn.data.session || !signedIn.data.user) {
+    const view = await viewFor(null, details.clientName, handle, base, signedIn.error?.message ?? "Sign-in failed");
+    return html(renderConsentPage(view));
+  }
+  const user = { id: signedIn.data.user.id, email: signedIn.data.user.email ?? null };
+  const view = await viewFor(user, details.clientName, handle, base);
+  const headers = new Headers();
+  headers.append("set-cookie", sessionCookie(signedIn.data.session.access_token, request));
+  return html(renderConsentPage(view), headers);
+}
+
+/**
+ * The web app keeps the Supabase session in localStorage, which this
+ * server-rendered page cannot see. The browser posts the access token and
+ * Supabase verifies it before ah_session is set. Approve still checks
+ * workspace membership. The OAuth handle has to come from this page.
+ */
+async function acceptBrowserSession(request: Request, oauth: OAuthHelpers, form: FormData, handle: string): Promise<Response> {
+  const { details, base } = await consentContext(request, oauth);
+  const fail = async (message: string, rejection: "invalid" | "error") => {
+    const view = await viewFor(null, details.clientName, handle, base, message, rejection);
+    return html(renderConsentPage(view));
+  };
+  if (!isSameOriginConsentPost(request)) {
+    return html(renderMessagePage("Sign in required", "Start the connection again from your client."), undefined, 403);
+  }
+  const token = postedAccessToken(form.get("access_token"));
+  if (!token) return fail("That sign-in expired. Sign in again.", "invalid");
+  try {
+    const result = await db.auth.getUser(token);
+    if (result.error || !result.data.user) {
+      const rejection = rejectionKind(result.error);
+      console.error(JSON.stringify({ message: "oauth session rejected", error: result.error?.message ?? "no user" }));
+      const message = rejection === "invalid" ? "That sign-in expired. Sign in again." : "Could not check your sign-in. Refresh the page to try again.";
+      return fail(message, rejection);
+    }
+    const user = { id: result.data.user.id, email: result.data.user.email ?? null };
+    const view = await viewFor(user, details.clientName, handle, base);
+    const headers = new Headers();
+    headers.append("set-cookie", sessionCookie(token, request));
+    return html(renderConsentPage(view), headers);
+  } catch (error) {
+    console.error(JSON.stringify({ message: "oauth session check failed", error: error instanceof Error ? error.message : "unknown" }));
+    return fail("Could not check your sign-in. Refresh the page to try again.", "error");
   }
 }
