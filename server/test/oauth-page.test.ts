@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { AUTH_CALLBACK_FLAG, authorizeResumeTarget, isSafeAuthorizePath, parseOAuthReturn, serializeOAuthReturn } from "../../shared/oauth-return.js";
 import { isMcpPath, isStaticAgentKey } from "../src/auth.js";
 import { prefillAgentName, providerFromClientName, resolveCapabilities } from "../src/capabilities.js";
-import { isSameOriginConsentPost, postedAccessToken } from "../src/oauth.js";
+import { consentHandleBoundToBrowser, postedAccessToken, sessionPostHeadersAllowed } from "../src/oauth.js";
 import { OAUTH_SESSION_SCRIPT, renderConsentPage } from "../src/oauth-page.js";
 import { createOAuthProvider } from "../src/worker.js";
 
@@ -81,33 +81,60 @@ test("a rejected browser session shows the login form instead of posting again",
   assert.match(html, /That sign-in expired/);
 });
 
-test("session handoff rejects a cross-site post and a token that is not a single string", () => {
-  const ok = new Request("https://agent-hub.example/authorize?client_id=abc", {
+test("session handoff allows the no-referrer Origin null post and rejects a cross-site post", () => {
+  const url = "https://agent-hub.example/authorize?client_id=https%3A%2F%2Fchatgpt.com%2Foauth%2Fclient.json";
+  const ok = new Request(url, {
     method: "POST",
     headers: { origin: "https://agent-hub.example", "sec-fetch-site": "same-origin" },
   });
-  const noFetchMetadata = new Request("https://agent-hub.example/authorize?client_id=abc", {
+  const noReferrer = new Request(url, {
+    method: "POST",
+    headers: { origin: "null", "sec-fetch-site": "same-origin" },
+  });
+  const noFetchMetadata = new Request(url, {
     method: "POST",
     headers: { origin: "https://agent-hub.example" },
   });
-  const cross = new Request("https://agent-hub.example/authorize?client_id=abc", {
+  const cross = new Request(url, {
     method: "POST",
     headers: { origin: "https://evil.example", "sec-fetch-site": "cross-site" },
   });
-  const mismatchedSite = new Request("https://agent-hub.example/authorize?client_id=abc", {
+  const mismatchedSite = new Request(url, {
     method: "POST",
     headers: { origin: "https://agent-hub.example", "sec-fetch-site": "cross-site" },
   });
-  assert.equal(isSameOriginConsentPost(ok), true);
-  assert.equal(isSameOriginConsentPost(noFetchMetadata), true);
-  assert.equal(isSameOriginConsentPost(cross), false);
-  assert.equal(isSameOriginConsentPost(mismatchedSite), false);
-  assert.equal(isSameOriginConsentPost(new Request("https://agent-hub.example/authorize")), false);
+  const wrongOrigin = new Request(url, {
+    method: "POST",
+    headers: { origin: "https://evil.example", "sec-fetch-site": "same-origin" },
+  });
+  assert.equal(sessionPostHeadersAllowed(ok), true);
+  assert.equal(sessionPostHeadersAllowed(noReferrer), true);
+  assert.equal(sessionPostHeadersAllowed(noFetchMetadata), true);
+  assert.equal(sessionPostHeadersAllowed(cross), false);
+  assert.equal(sessionPostHeadersAllowed(mismatchedSite), false);
+  assert.equal(sessionPostHeadersAllowed(wrongOrigin), false);
+  assert.equal(sessionPostHeadersAllowed(new Request(url)), true);
   assert.equal(postedAccessToken("  header.payload.sig  "), "header.payload.sig");
   assert.equal(postedAccessToken(""), null);
   assert.equal(postedAccessToken("two tokens"), null);
   assert.equal(postedAccessToken("x".repeat(8193)), null);
   assert.equal(postedAccessToken(new File(["tok"], "tok.txt")), null);
+});
+
+test("consent cookie binds the handle to this browser", async () => {
+  const handle = "consent-handle";
+  const hash = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(handle)))]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+  const cookie = `__Host-oauth-consent-${hash.slice(0, 16)}=${hash}`;
+  const bound = new Request("https://agent-hub.example/authorize?client_id=abc", { headers: { cookie } });
+  const missing = new Request("https://agent-hub.example/authorize?client_id=abc");
+  const swapped = new Request("https://agent-hub.example/authorize?client_id=abc", {
+    headers: { cookie: `__Host-oauth-consent-${hash.slice(0, 16)}=${"0".repeat(64)}` },
+  });
+  assert.equal(await consentHandleBoundToBrowser(bound, handle), true);
+  assert.equal(await consentHandleBoundToBrowser(missing, handle), false);
+  assert.equal(await consentHandleBoundToBrowser(swapped, handle), false);
 });
 
 test("magic-link return stays on the same authorize request", () => {
