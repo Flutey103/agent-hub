@@ -99,6 +99,52 @@ export interface ActivityRow {
   created_at: string;
 }
 
+export interface Fact {
+  id: string;
+  statement: string;
+  source_url: string | null;
+  confidence: number | null;
+  tags: string[];
+  recorded_by: string | null;
+  task_id: string | null;
+  valid_until: string | null;
+  created_at: string;
+}
+
+export interface ToolCall {
+  id: number;
+  agent_id: string | null;
+  task_id: string | null;
+  tool: string;
+  ok: boolean;
+  duration_ms: number | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  created_at: string;
+}
+
+export interface LoopRun {
+  id: string;
+  loop_id: string;
+  status: "running" | "done" | "failed" | "cancelled";
+  current_stage: number;
+  started_at: string;
+  completed_at: string | null;
+}
+
+export interface Member {
+  user_id: string;
+  role: "owner" | "admin" | "member";
+}
+
+export const PRIORITY_LABEL: Record<number, string> = {
+  1: "Urgent",
+  2: "High",
+  3: "Normal",
+  4: "Low",
+  5: "Lowest",
+};
+
 export const STATUS_LABEL: Record<TaskStatus, string> = {
   queued: "Queued",
   claimed: "In progress",

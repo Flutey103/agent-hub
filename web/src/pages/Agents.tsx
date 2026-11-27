@@ -1,50 +1,81 @@
-import { useQueryClient } from "@tanstack/react-query";
-import { useState, type FormEvent } from "react";
-import { serverSend } from "../lib/api";
-import { CAPABILITY_PRESETS } from "../lib/capabilities";
-import { useAgents } from "../lib/queries";
-import { SERVER_URL, supabase } from "../lib/supabase";
-import { timeAgo, type Agent } from "../lib/types";
-import { useWorkspace } from "../lib/workspace";
+import { useQueryClient } from "@tanstack/react-query"
+import { useMemo, useState, type FormEvent } from "react"
+import { toast } from "sonner"
+import { productName } from "../../../shared/brand"
+import { CAPABILITY_PRESETS } from "@/lib/capabilities"
+import { ResponsiveDialog } from "@/components/responsive-dialog"
+import { Button } from "@/components/ui/button"
+import { Field, Input } from "@/components/ui/input"
+import { Select } from "@/components/ui/menu"
+import { EmptyState, ErrorText, LoadingBlock, PageHeader } from "@/components/ui-bits"
+import { serverSend } from "@/lib/api"
+import { useActivity, useAgents, useToolCalls } from "@/lib/queries"
+import { SERVER_URL, supabase } from "@/lib/supabase"
+import { usePreviewLock } from "@/lib/task-actions"
+import { timeAgo, type Agent, type ToolCall } from "@/lib/types"
+import { usePageTitle } from "@/lib/utils"
+import { useWorkspace } from "@/lib/workspace"
 
-function mcpEndpoint(): string {
-  if (SERVER_URL) return `${SERVER_URL.replace(/\/$/, "")}/mcp`;
-  if (typeof window !== "undefined") return `${window.location.origin}/mcp`;
-  return "/mcp";
+const CLIENTS = [
+  { name: "Claude", steps: ["Open Settings, then Connectors.", "Add a custom connector.", "Paste the MCP URL.", "Sign in when asked and approve the assistant."] },
+  { name: "ChatGPT", steps: ["Open Settings, then Apps or Connectors.", "Create a new app.", "Paste the same MCP URL.", "Approve it on the consent screen."] },
+  { name: "Grok", steps: ["On grok.com, add the MCP URL as a custom connector.", "Or call the REST tools with an API key as Authorization: Bearer ah_….", "Approve the connector if the browser asks."] },
+]
+
+function mcpEndpoint() {
+  if (SERVER_URL) return `${SERVER_URL.replace(/\/$/, "")}/mcp`
+  if (typeof window !== "undefined") return `${window.location.origin}/mcp`
+  return "/mcp"
 }
 
-const CONNECTORS = [
-  { name: "Claude", text: "Settings → Connectors → Add custom connector. Paste the MCP URL. Sign in when asked and approve the agent." },
-  { name: "ChatGPT", text: "Settings → Apps or Connectors → New app. Paste the same MCP URL and approve it in Agent Hub." },
-  { name: "Grok", text: "Add the MCP URL as a custom connector on grok.com, or call the REST tools with an API key as Authorization: Bearer ah_…." },
-];
+function spark(calls: ToolCall[], agentId: string) {
+  const days = Array.from({ length: 30 }, (_, index) => {
+    const date = new Date()
+    date.setHours(0, 0, 0, 0)
+    date.setDate(date.getDate() - (29 - index))
+    return { key: date.toISOString().slice(0, 10), count: 0 }
+  })
+  for (const call of calls) {
+    if (call.agent_id !== agentId) continue
+    const bucket = days.find((day) => day.key === call.created_at.slice(0, 10))
+    if (bucket) bucket.count += 1
+  }
+  const max = Math.max(1, ...days.map((day) => day.count))
+  return days.map((day) => ({ ...day, height: day.count === 0 ? 8 : Math.round((day.count / max) * 100) }))
+}
 
-export default function Agents() {
-  const qc = useQueryClient();
-  const { workspaceId } = useWorkspace();
-  const { data: agents = [] } = useAgents();
-  const endpoint = mcpEndpoint();
-  const [copied, setCopied] = useState(false);
-  const [name, setName] = useState("");
-  const [provider, setProvider] = useState("other");
-  const [mode, setMode] = useState("connected");
-  const [preset, setPreset] = useState("all");
-  const [extra, setExtra] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [issued, setIssued] = useState<{ name: string; apiKey: string } | null>(null);
+export default function AgentsPage() {
+  usePageTitle(`Agents — ${productName}`)
+  const { workspaceId } = useWorkspace()
+  const qc = useQueryClient()
+  const locked = usePreviewLock()
+  const agents = useAgents()
+  const calls = useToolCalls()
+  const activity = useActivity(80)
+  const endpoint = mcpEndpoint()
+  const [copied, setCopied] = useState(false)
+  const [name, setName] = useState("")
+  const [provider, setProvider] = useState("other")
+  const [mode, setMode] = useState("connected")
+  const [preset, setPreset] = useState("all")
+  const [extra, setExtra] = useState("")
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [issued, setIssued] = useState<{ name: string; apiKey: string } | null>(null)
+  const [profile, setProfile] = useState<Agent | null>(null)
+  const [revoke, setRevoke] = useState<Agent | null>(null)
 
   async function copy(text: string) {
-    await navigator.clipboard.writeText(text);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1500);
+    await navigator.clipboard.writeText(text)
+    setCopied(true)
+    window.setTimeout(() => setCopied(false), 1500)
   }
 
   async function createKey(event: FormEvent) {
-    event.preventDefault();
-    setBusy(true);
-    setError(null);
-    setIssued(null);
+    event.preventDefault()
+    if (locked("Creating a key")) return
+    setBusy(true)
+    setError(null)
     try {
       const created = await serverSend<{ agent: { name: string }; api_key: string }>("POST", `/workspaces/${workspaceId}/api-keys`, {
         name,
@@ -52,125 +83,203 @@ export default function Agents() {
         mode,
         preset,
         capabilities: extra.split(",").map((item) => item.trim()).filter(Boolean),
-      });
-      setIssued({ name: created.agent.name, apiKey: created.api_key });
-      setName("");
-      await qc.invalidateQueries({ queryKey: ["agents"] });
+      })
+      setIssued({ name: created.agent.name, apiKey: created.api_key })
+      setName("")
+      await qc.invalidateQueries({ queryKey: ["agents"] })
     } catch (createError) {
-      setError((createError as Error).message);
+      setError((createError as Error).message)
     } finally {
-      setBusy(false);
+      setBusy(false)
     }
   }
 
-  async function revoke(agent: Agent) {
-    setError(null);
+  async function confirmRevoke() {
+    if (!revoke) return
+    if (locked("Revoking a key")) return
+    setError(null)
     try {
-      await serverSend("DELETE", `/workspaces/${workspaceId}/api-keys/${agent.id}`);
-      await qc.invalidateQueries({ queryKey: ["agents"] });
+      await serverSend("DELETE", `/workspaces/${workspaceId}/api-keys/${revoke.id}`)
+      await qc.invalidateQueries({ queryKey: ["agents"] })
+      setRevoke(null)
+      setProfile(null)
+      toast("Key revoked")
     } catch (revokeError) {
-      setError((revokeError as Error).message);
+      setError((revokeError as Error).message)
     }
   }
 
   async function setActive(agent: Agent, isActive: boolean) {
-    const { error: updateError } = await supabase.from("agents").update({ is_active: isActive }).eq("id", agent.id).eq("workspace_id", workspaceId);
+    if (locked(isActive ? "Reactivating" : "Deactivating")) return
+    const { error: updateError } = await supabase.from("agents").update({ is_active: isActive }).eq("id", agent.id).eq("workspace_id", workspaceId)
     if (updateError) {
-      setError(updateError.message);
-      return;
+      setError(updateError.message)
+      return
     }
-    await qc.invalidateQueries({ queryKey: ["agents"] });
+    await qc.invalidateQueries({ queryKey: ["agents"] })
   }
 
-  return (
-    <div className="max-w-4xl space-y-4">
-      <div>
-        <h1 className="mb-1 text-xl font-semibold">Agents</h1>
-        <p className="text-sm text-neutral-500">Connect a client with OAuth, or issue a revocable API key for a headless agent or the Grok API.</p>
-      </div>
+  if (agents.isLoading) return <LoadingBlock />
+  if (agents.error) return <ErrorText message={agents.error.message} />
+  const rows = agents.data ?? []
 
-      <section className="card space-y-3">
-        <h2 className="font-medium">Connect a connector</h2>
-        <p className="text-sm text-neutral-600 dark:text-neutral-300">
-          Paste this MCP URL into the client. It will send you to an approval page where you sign in, pick this workspace, and name the agent.
-        </p>
-        <div className="flex flex-wrap items-center gap-2">
-          <code className="rounded bg-neutral-100 px-2 py-1 text-sm dark:bg-neutral-800">{endpoint}</code>
-          <button className="btn" type="button" onClick={() => void copy(endpoint)}>{copied ? "Copied" : "Copy"}</button>
+  return (
+    <div className="space-y-4">
+      <PageHeader title="Agents" description="Connect a chat assistant with the MCP URL, or issue a revocable API key." />
+      <section className="space-y-3 rounded-lg border p-4">
+        <h2 className="font-medium">MCP URL</h2>
+        <p className="text-sm text-muted-foreground">Paste this into the client. You'll approve the assistant and choose the workspace.</p>
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <code className="min-w-0 flex-1 overflow-wrap-anywhere rounded-md bg-muted px-3 py-3 text-sm">{endpoint}</code>
+          <Button className="w-full sm:w-auto" onClick={() => void copy(endpoint)}>
+            {copied ? "Copied" : "Copy"}
+          </Button>
         </div>
-        <ul className="space-y-2 text-sm">
-          {CONNECTORS.map((connector) => (
-            <li key={connector.name}>
-              <span className="font-medium">{connector.name}. </span>
-              <span className="text-neutral-600 dark:text-neutral-300">{connector.text}</span>
-            </li>
+        <div className="grid gap-3 lg:grid-cols-3">
+          {CLIENTS.map((client) => (
+            <article key={client.name} className="rounded-lg border p-3">
+              <h3 className="font-medium">{client.name}</h3>
+              <ol className="mt-2 list-decimal space-y-1 pl-4 text-sm text-muted-foreground">
+                {client.steps.map((step) => (
+                  <li key={step}>{step}</li>
+                ))}
+              </ol>
+            </article>
           ))}
-        </ul>
+        </div>
       </section>
 
-      <section className="card space-y-3">
+      <section className="space-y-3 rounded-lg border p-4">
         <h2 className="font-medium">API keys</h2>
-        <p className="text-sm text-neutral-500">A key is shown once and stored only as a hash, scoped to this workspace. Revoking it stops that key immediately.</p>
-        <form className="grid gap-2 md:grid-cols-2" onSubmit={createKey}>
-          <input className="input" placeholder="Agent name" value={name} onChange={(event) => setName(event.target.value)} required maxLength={80} />
-          <select className="input" value={provider} onChange={(event) => setProvider(event.target.value)}>
-            <option value="anthropic">Anthropic</option>
-            <option value="openai">OpenAI</option>
-            <option value="xai">xAI</option>
-            <option value="other">Other</option>
-          </select>
-          <select className="input" value={mode} onChange={(event) => setMode(event.target.value)}>
-            <option value="connected">Connected</option>
-            <option value="headless">Headless</option>
-          </select>
-          <select className="input" value={preset} onChange={(event) => setPreset(event.target.value)}>
-            {CAPABILITY_PRESETS.map((item) => (
-              <option key={item.id} value={item.id}>{item.label}</option>
-            ))}
-          </select>
-          <input className="input md:col-span-2" placeholder="Extra capabilities, comma separated (optional)" value={extra} onChange={(event) => setExtra(event.target.value)} />
-          <button className="btn btn-primary md:col-span-2 w-fit" disabled={busy}>{busy ? "Creating…" : "Create API key"}</button>
+        <p className="text-sm text-muted-foreground">A key is shown once and stored only as a hash. Revoking it stops that key immediately.</p>
+        <form className="grid gap-2 sm:grid-cols-2" onSubmit={createKey}>
+          <Field label="Name">
+            <Input value={name} onChange={(event) => setName(event.target.value)} required maxLength={80} />
+          </Field>
+          <Field label="Provider">
+            <Select value={provider} onValueChange={setProvider} options={[{ value: "anthropic", label: "Anthropic" }, { value: "openai", label: "OpenAI" }, { value: "xai", label: "xAI" }, { value: "other", label: "Other" }]} />
+          </Field>
+          <Field label="Mode">
+            <Select value={mode} onValueChange={setMode} options={[{ value: "connected", label: "Connected" }, { value: "headless", label: "Headless" }]} />
+          </Field>
+          <Field label="Capabilities">
+            <Select value={preset} onValueChange={setPreset} options={CAPABILITY_PRESETS.map((item) => ({ value: item.id, label: item.label }))} />
+          </Field>
+          <div className="sm:col-span-2">
+            <Field label="Extra capabilities" hint="Optional, comma separated">
+              <Input value={extra} onChange={(event) => setExtra(event.target.value)} />
+            </Field>
+          </div>
+          <Button type="submit" className="sm:col-span-2 sm:w-fit" disabled={busy}>
+            {busy ? "Creating…" : "Create API key"}
+          </Button>
         </form>
-        {error && <p className="text-sm text-red-600">{error}</p>}
-        {issued && (
+        {error ? <p className="text-sm text-destructive">{error}</p> : null}
+        {issued ? (
           <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-950/40">
             <p className="font-medium">Key for {issued.name}</p>
-            <p className="mt-1 text-neutral-600 dark:text-neutral-300">Copy it now. Agent Hub will not show it again.</p>
-            <code className="mt-2 block break-all rounded bg-white px-2 py-1 dark:bg-neutral-900">{issued.apiKey}</code>
-            <button className="btn mt-2" type="button" onClick={() => void navigator.clipboard.writeText(issued.apiKey)}>Copy key</button>
+            <p className="mt-1 text-muted-foreground">Copy it now. It will not be shown again.</p>
+            <code className="mt-2 block overflow-wrap-anywhere rounded bg-background px-2 py-2">{issued.apiKey}</code>
+            <Button className="mt-2" variant="outline" onClick={() => void navigator.clipboard.writeText(issued.apiKey)}>
+              Copy key
+            </Button>
           </div>
-        )}
+        ) : null}
       </section>
 
-      <div className="grid grid-cols-2 gap-3">
-        {agents.map((agent) => (
-          <div key={agent.id} className="card">
-            <div className="flex items-center justify-between gap-2">
-              <div className="font-medium">{agent.name}</div>
-              <span className={`pill ${agent.mode === "headless" ? "bg-violet-100 text-violet-800 dark:bg-violet-900/50 dark:text-violet-200" : "bg-blue-100 text-blue-800 dark:bg-blue-900/50 dark:text-blue-200"}`}>{agent.mode}</span>
-            </div>
-            <div className="text-xs text-neutral-500">
-              {agent.slug} · {agent.provider}
-              {agent.model ? ` · ${agent.model}` : ""} · {agent.last_seen_at ? `seen ${timeAgo(agent.last_seen_at)}` : "never connected"}
-              {!agent.is_active && " · inactive"}
-            </div>
-            <div className="mt-2 flex flex-wrap gap-1">
-              {agent.capabilities.map((capability) => (
-                <span key={capability} className="pill bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-200">{capability}</span>
-              ))}
-              {agent.oauth_client_id && <span className="pill bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-200">OAuth</span>}
-              {agent.has_api_key && <span className="pill bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200">API key</span>}
-            </div>
-            {agent.system_prompt && <p className="mt-2 line-clamp-3 text-xs text-neutral-500">{agent.system_prompt}</p>}
-            <div className="mt-3 flex gap-2">
-              {agent.has_api_key && (
-                <button className="btn" type="button" onClick={() => void revoke(agent)}>Revoke key</button>
-              )}
-              <button className="btn" type="button" onClick={() => void setActive(agent, !agent.is_active)}>{agent.is_active ? "Deactivate" : "Reactivate"}</button>
-            </div>
-          </div>
+      {rows.length === 0 ? (
+        <EmptyState title="No assistants yet" body="Connect one with the URL above. The card turns live after the first tool call." />
+      ) : (
+        <div className="grid gap-3 md:grid-cols-2">
+          {rows.map((agent) => (
+            <button key={agent.id} type="button" className="rounded-lg border p-4 text-left" onClick={() => setProfile(agent)}>
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-medium">{agent.name}</span>
+                <span className={`size-2 rounded-full ${agent.last_seen_at ? "bg-emerald-500" : "bg-amber-500"}`} />
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {agent.provider} · {agent.mode} · {agent.last_seen_at ? `seen ${timeAgo(agent.last_seen_at)}` : "waiting for the first call"}
+                {!agent.is_active ? " · inactive" : ""}
+              </p>
+              <div className="mt-2 flex flex-wrap gap-1">
+                {agent.capabilities.slice(0, 4).map((capability) => (
+                  <span key={capability} className="rounded-full border px-2 py-0.5 text-xs">
+                    {capability}
+                  </span>
+                ))}
+                {agent.oauth_client_id ? <span className="rounded-full border px-2 py-0.5 text-xs">OAuth</span> : null}
+                {agent.has_api_key ? <span className="rounded-full border px-2 py-0.5 text-xs">API key</span> : null}
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+
+      <ResponsiveDialog open={Boolean(profile)} onOpenChange={(open) => !open && setProfile(null)} title={profile?.name ?? "Assistant"} description="Status, capabilities and recent actions.">
+        {profile ? <AgentProfile agent={profile} calls={calls.data ?? []} activity={activity.data ?? []} onRevoke={() => setRevoke(profile)} onToggle={() => void setActive(profile, !profile.is_active)} /> : null}
+      </ResponsiveDialog>
+      <ResponsiveDialog open={Boolean(revoke)} onOpenChange={(open) => !open && setRevoke(null)} title="Revoke API key?" description="The assistant will have to be given a new key.">
+        <Button variant="destructive" className="w-full" onClick={() => void confirmRevoke()}>
+          Revoke key
+        </Button>
+      </ResponsiveDialog>
+    </div>
+  )
+}
+
+function AgentProfile({
+  agent,
+  calls,
+  activity,
+  onRevoke,
+  onToggle,
+}: {
+  agent: Agent
+  calls: ToolCall[]
+  activity: { id: number; agent_id: string | null; event: string; created_at: string }[]
+  onRevoke: () => void
+  onToggle: () => void
+}) {
+  const bars = useMemo(() => spark(calls, agent.id), [calls, agent.id])
+  const recent = activity.filter((row) => row.agent_id === agent.id).slice(0, 6)
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-muted-foreground">
+        {agent.last_seen_at ? `Last seen ${timeAgo(agent.last_seen_at)}` : "Waiting for the first call"} · {agent.mode}
+      </p>
+      <div className="flex h-12 items-end gap-px" aria-hidden>
+        {bars.map((bar) => (
+          <span key={bar.key} className="min-w-0 flex-1 rounded-sm bg-foreground/70" style={{ height: `${bar.height}%` }} />
         ))}
       </div>
+      <p className="text-xs text-muted-foreground">Tool calls, last 30 days</p>
+      <div className="flex flex-wrap gap-1">
+        {agent.capabilities.map((capability) => (
+          <span key={capability} className="rounded-full border px-2 py-0.5 text-xs">
+            {capability}
+          </span>
+        ))}
+      </div>
+      {agent.system_prompt ? <p className="text-sm text-muted-foreground">{agent.system_prompt}</p> : null}
+      <ul className="space-y-1 text-sm">
+        {recent.map((row) => (
+          <li key={row.id} className="flex justify-between gap-2">
+            <span>{row.event.replace(/_/g, " ")}</span>
+            <span className="text-xs text-muted-foreground">{timeAgo(row.created_at)}</span>
+          </li>
+        ))}
+        {recent.length === 0 ? <li className="text-muted-foreground">No actions recorded yet.</li> : null}
+      </ul>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <Button variant="outline" onClick={onToggle}>
+          {agent.is_active ? "Deactivate" : "Reactivate"}
+        </Button>
+        {agent.has_api_key ? (
+          <Button variant="destructive" onClick={onRevoke}>
+            Revoke key
+          </Button>
+        ) : null}
+      </div>
     </div>
-  );
+  )
 }
