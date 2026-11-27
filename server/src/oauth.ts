@@ -11,7 +11,7 @@ import type { Context } from "hono";
 import { deleteAgent, registerConnectedAgent } from "./agents-admin.js";
 import { prefillAgentName } from "./capabilities.js";
 import { db, HubError } from "./db.js";
-import { env } from "./env.js";
+import { ConfigError, env } from "./env.js";
 import { renderConsentPage, renderMessagePage, type ConsentView } from "./oauth-page.js";
 import { ensurePersonalWorkspace } from "./tenant.js";
 
@@ -118,6 +118,43 @@ function rejectionKind(error: { status?: number; message?: string } | null): "in
   return "invalid";
 }
 
+const NOT_CONFIGURED = "Sign-in cannot be checked because this server is missing its Supabase service role secret.";
+
+/** Maps a getUser failure to a page and a log line that never includes the token or a key value. */
+export function sessionFailure(error: unknown): {
+  title: string;
+  message: string;
+  rejection?: "invalid" | "error";
+  log: Record<string, string | number | null>;
+} {
+  if (error instanceof ConfigError) {
+    return {
+      title: "Server is not configured",
+      message: NOT_CONFIGURED,
+      log: { message: "oauth session check failed", reason: "missing_binding", binding: error.binding },
+    };
+  }
+  const record = error && typeof error === "object" ? (error as { status?: unknown; code?: unknown; message?: unknown; name?: unknown }) : {};
+  const status = typeof record.status === "number" ? record.status : null;
+  const code = typeof record.code === "string" ? record.code : null;
+  const name = error instanceof Error ? error.name : typeof record.name === "string" ? record.name : "unknown";
+  const message = typeof record.message === "string" ? record.message : "";
+  const rejection = rejectionKind({ status: status ?? undefined, message });
+  return {
+    title: "Sign in required",
+    message: rejection === "invalid" ? "That sign-in expired. Sign in again." : "Could not check your sign-in. Refresh the page to try again.",
+    rejection,
+    log: { message: "oauth session rejected", name, status, code },
+  };
+}
+
+function sessionFailureResponse(error: unknown, fail: (message: string, rejection: "invalid" | "error") => Response | Promise<Response>): Response | Promise<Response> {
+  const failure = sessionFailure(error);
+  console.error(JSON.stringify(failure.log));
+  if (!failure.rejection) return html(renderMessagePage(failure.title, failure.message), undefined, 500);
+  return fail(failure.message, failure.rejection);
+}
+
 async function readSession(request: Request): Promise<SessionUser | null> {
   const token = readCookie(request, SESSION_COOKIE);
   if (!token) return null;
@@ -156,6 +193,10 @@ export async function handleAuthorize(c: Context): Promise<Response> {
     if (error instanceof AuthorizationError) return html(renderMessagePage("Authorization request declined", error.description), undefined, 400);
     if (error instanceof CimdFetchError) return html(renderMessagePage("This app could not be verified", "The client's metadata document could not be loaded."), undefined, 400);
     if (error instanceof HubError) return html(renderMessagePage("Could not connect the agent", error.message), undefined, error.status);
+    if (error instanceof ConfigError) {
+      console.error(JSON.stringify({ message: "oauth config missing", binding: error.binding }));
+      return html(renderMessagePage("Server is not configured", NOT_CONFIGURED), undefined, 500);
+    }
     throw error;
   }
 }
@@ -318,19 +359,13 @@ async function acceptBrowserSession(request: Request, oauth: OAuthHelpers, form:
   if (!token) return fail("That sign-in expired. Sign in again.", "invalid");
   try {
     const result = await db.auth.getUser(token);
-    if (result.error || !result.data.user) {
-      const rejection = rejectionKind(result.error);
-      console.error(JSON.stringify({ message: "oauth session rejected", error: result.error?.message ?? "no user" }));
-      const message = rejection === "invalid" ? "That sign-in expired. Sign in again." : "Could not check your sign-in. Refresh the page to try again.";
-      return fail(message, rejection);
-    }
+    if (result.error || !result.data.user) return sessionFailureResponse(result.error ?? new Error("no user"), fail);
     const user = { id: result.data.user.id, email: result.data.user.email ?? null };
     const view = await viewFor(user, details.clientName, handle, base);
     const headers = new Headers();
     headers.append("set-cookie", sessionCookie(token, request));
     return html(renderConsentPage(view), headers);
   } catch (error) {
-    console.error(JSON.stringify({ message: "oauth session check failed", error: error instanceof Error ? error.message : "unknown" }));
-    return fail("Could not check your sign-in. Refresh the page to try again.", "error");
+    return sessionFailureResponse(error, fail);
   }
 }

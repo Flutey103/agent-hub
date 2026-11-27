@@ -4,7 +4,8 @@ import { test } from "node:test";
 import { AUTH_CALLBACK_FLAG, authorizeResumeTarget, isSafeAuthorizePath, parseOAuthReturn, serializeOAuthReturn } from "../../shared/oauth-return.js";
 import { isMcpPath, isStaticAgentKey } from "../src/auth.js";
 import { prefillAgentName, providerFromClientName, resolveCapabilities } from "../src/capabilities.js";
-import { consentHandleBoundToBrowser, postedAccessToken, sessionPostHeadersAllowed } from "../src/oauth.js";
+import { ConfigError } from "../src/env.js";
+import { consentHandleBoundToBrowser, postedAccessToken, sessionFailure, sessionPostHeadersAllowed } from "../src/oauth.js";
 import { OAUTH_SESSION_SCRIPT, renderConsentPage } from "../src/oauth-page.js";
 import { createOAuthProvider } from "../src/worker.js";
 
@@ -119,6 +120,22 @@ test("session handoff allows the no-referrer Origin null post and rejects a cros
   assert.equal(postedAccessToken("two tokens"), null);
   assert.equal(postedAccessToken("x".repeat(8193)), null);
   assert.equal(postedAccessToken(new File(["tok"], "tok.txt")), null);
+});
+
+test("a missing service role binding is reported without blaming the session", () => {
+  const missing = sessionFailure(new ConfigError("SUPABASE_SERVICE_ROLE_KEY"));
+  assert.equal(missing.rejection, undefined);
+  assert.match(missing.message, /Supabase service role secret/);
+  assert.equal(missing.log.binding, "SUPABASE_SERVICE_ROLE_KEY");
+  assert.equal(JSON.stringify(missing.log).includes("eyJ"), false);
+  const invalid = sessionFailure({ name: "AuthApiError", status: 401, code: "bad_jwt", message: "invalid JWT" });
+  assert.equal(invalid.rejection, "invalid");
+  assert.match(invalid.message, /expired/);
+  assert.equal(invalid.log.status, 401);
+  assert.equal(invalid.log.code, "bad_jwt");
+  const offline = sessionFailure({ name: "AuthRetryableFetchError", status: 0, message: "Failed to fetch" });
+  assert.equal(offline.rejection, "error");
+  assert.match(offline.message, /Could not check your sign-in/);
 });
 
 test("consent cookie binds the handle to this browser", async () => {
