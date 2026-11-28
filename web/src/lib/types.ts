@@ -15,6 +15,10 @@ export interface Agent {
   has_api_key?: boolean;
   oauth_client_id?: string | null;
   created_by?: string | null;
+  avatar_url?: string | null;
+  client_uri?: string | null;
+  logo_uri?: string | null;
+  website_url?: string | null;
 }
 
 export interface Task {

@@ -1,5 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query"
 import { useMemo, useState, type FormEvent } from "react"
+import { AgentAvatar } from "@/components/agent-avatar"
 import { toast } from "sonner"
 import { productName } from "../../../shared/brand"
 import { CAPABILITY_PRESETS } from "@/lib/capabilities"
@@ -46,7 +47,7 @@ function spark(calls: ToolCall[], agentId: string) {
 
 export default function AgentsPage() {
   usePageTitle(`Agents — ${productName}`)
-  const { workspaceId } = useWorkspace()
+  const { workspaceId, workspace } = useWorkspace()
   const qc = useQueryClient()
   const locked = usePreviewLock()
   const agents = useAgents()
@@ -64,6 +65,7 @@ export default function AgentsPage() {
   const [issued, setIssued] = useState<{ name: string; apiKey: string } | null>(null)
   const [profile, setProfile] = useState<Agent | null>(null)
   const [revoke, setRevoke] = useState<Agent | null>(null)
+  const canBackfill = workspace.role === "owner" || workspace.role === "admin"
 
   async function copy(text: string) {
     await navigator.clipboard.writeText(text)
@@ -119,13 +121,38 @@ export default function AgentsPage() {
     await qc.invalidateQueries({ queryKey: ["agents"] })
   }
 
+  async function refreshIcons() {
+    if (locked("Refreshing icons")) return
+    setError(null)
+    try {
+      const result = await serverSend<{ updated: number; failed: number; remaining: number }>("POST", `/workspaces/${workspaceId}/avatars/backfill`)
+      await qc.invalidateQueries({ queryKey: ["agents"] })
+      const failed = result.failed ? ` ${result.failed} could not be fetched.` : ""
+      const remaining = result.remaining ? ` ${result.remaining} still to do — run it again.` : ""
+      toast(`Updated ${result.updated} ${result.updated === 1 ? "icon" : "icons"}.${failed}${remaining}`)
+    } catch (refreshError) {
+      setError((refreshError as Error).message)
+    }
+  }
+
   if (agents.isLoading) return <LoadingBlock />
   if (agents.error) return <ErrorText message={agents.error.message} />
   const rows = agents.data ?? []
+  const liveProfile = rows.find((agent) => agent.id === profile?.id) ?? profile
 
   return (
     <div className="space-y-4">
-      <PageHeader title="Agents" description="Connect a chat assistant with the MCP URL, or issue a revocable API key." />
+      <PageHeader
+        title="Agents"
+        description="Connect a chat assistant with the MCP URL, or issue a revocable API key."
+        actions={
+          canBackfill ? (
+            <Button variant="outline" onClick={() => void refreshIcons()}>
+              Refresh missing icons
+            </Button>
+          ) : null
+        }
+      />
       <section className="space-y-3 rounded-lg border p-4">
         <h2 className="font-medium">MCP URL</h2>
         <p className="text-sm text-muted-foreground">Paste this into the client. You'll approve the assistant and choose the workspace.</p>
@@ -193,14 +220,19 @@ export default function AgentsPage() {
         <div className="grid gap-3 md:grid-cols-2">
           {rows.map((agent) => (
             <button key={agent.id} type="button" className="rounded-lg border p-4 text-left" onClick={() => setProfile(agent)}>
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-medium">{agent.name}</span>
-                <span className={`size-2 rounded-full ${agent.last_seen_at ? "bg-emerald-500" : "bg-amber-500"}`} />
+              <div className="flex items-center gap-3">
+                <AgentAvatar name={agent.name} avatarUrl={agent.avatar_url} seed={agent.id} size="md" />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate font-medium">{agent.name}</span>
+                    <span className={`size-2 shrink-0 rounded-full ${agent.last_seen_at ? "bg-emerald-500" : "bg-amber-500"}`} />
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {agent.provider} · {agent.mode} · {agent.last_seen_at ? `seen ${timeAgo(agent.last_seen_at)}` : "waiting for the first call"}
+                    {!agent.is_active ? " · inactive" : ""}
+                  </p>
+                </div>
               </div>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {agent.provider} · {agent.mode} · {agent.last_seen_at ? `seen ${timeAgo(agent.last_seen_at)}` : "waiting for the first call"}
-                {!agent.is_active ? " · inactive" : ""}
-              </p>
               <div className="mt-2 flex flex-wrap gap-1">
                 {agent.capabilities.slice(0, 4).map((capability) => (
                   <span key={capability} className="rounded-full border px-2 py-0.5 text-xs">
@@ -215,8 +247,17 @@ export default function AgentsPage() {
         </div>
       )}
 
-      <ResponsiveDialog open={Boolean(profile)} onOpenChange={(open) => !open && setProfile(null)} title={profile?.name ?? "Assistant"} description="Status, capabilities and recent actions.">
-        {profile ? <AgentProfile agent={profile} calls={calls.data ?? []} activity={activity.data ?? []} onRevoke={() => setRevoke(profile)} onToggle={() => void setActive(profile, !profile.is_active)} /> : null}
+      <ResponsiveDialog open={Boolean(liveProfile)} onOpenChange={(open) => !open && setProfile(null)} title={liveProfile?.name ?? "Assistant"} description="Status, capabilities and recent actions.">
+        {liveProfile ? (
+          <AgentProfile
+            key={liveProfile.id}
+            agent={liveProfile}
+            calls={calls.data ?? []}
+            activity={activity.data ?? []}
+            onRevoke={() => setRevoke(liveProfile)}
+            onToggle={() => void setActive(liveProfile, !liveProfile.is_active)}
+          />
+        ) : null}
       </ResponsiveDialog>
       <ResponsiveDialog open={Boolean(revoke)} onOpenChange={(open) => !open && setRevoke(null)} title="Revoke API key?" description="The assistant will have to be given a new key.">
         <Button variant="destructive" className="w-full" onClick={() => void confirmRevoke()}>
@@ -240,13 +281,70 @@ function AgentProfile({
   onRevoke: () => void
   onToggle: () => void
 }) {
+  const { workspaceId } = useWorkspace()
+  const locked = usePreviewLock()
+  const qc = useQueryClient()
+  const [website, setWebsite] = useState(agent.website_url ?? "")
+  const [imageUrl, setImageUrl] = useState(agent.oauth_client_id ? "" : (agent.logo_uri ?? ""))
+  const [busy, setBusy] = useState(false)
+  const [formError, setFormError] = useState<string | null>(null)
   const bars = useMemo(() => spark(calls, agent.id), [calls, agent.id])
   const recent = activity.filter((row) => row.agent_id === agent.id).slice(0, 6)
+
+  async function saveIcon(refresh: boolean) {
+    if (locked(refresh ? "Refreshing the icon" : "Saving the icon")) return
+    setBusy(true)
+    setFormError(null)
+    try {
+      const body = refresh
+        ? { refresh: true }
+        : {
+            website_url: website.trim(),
+            ...(agent.oauth_client_id ? {} : { image_url: imageUrl.trim() }),
+          }
+      await serverSend("POST", `/workspaces/${workspaceId}/agents/${agent.id}/avatar`, body)
+      await qc.invalidateQueries({ queryKey: ["agents"] })
+      toast(refresh ? "Icon refreshed" : "Icon saved")
+    } catch (saveError) {
+      setFormError((saveError as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <div className="space-y-3">
-      <p className="text-sm text-muted-foreground">
+      <div className="flex items-center gap-3">
+        <AgentAvatar name={agent.name} avatarUrl={agent.avatar_url} seed={agent.id} size="lg" />
+        <p className="text-sm text-muted-foreground">
         {agent.last_seen_at ? `Last seen ${timeAgo(agent.last_seen_at)}` : "Waiting for the first call"} · {agent.mode}
-      </p>
+        </p>
+      </div>
+      <form
+        className="space-y-2"
+        onSubmit={(event) => {
+          event.preventDefault()
+          void saveIcon(false)
+        }}
+      >
+        <Field label="Website" hint="We fetch this site's icon on the server. The browser never loads it from the other site.">
+          <Input value={website} onChange={(event) => setWebsite(event.target.value)} placeholder="https://example.com" inputMode="url" maxLength={500} />
+        </Field>
+        {agent.oauth_client_id ? null : (
+          <Field label="Icon URL" hint="Optional. An https image, if you already have one.">
+            <Input value={imageUrl} onChange={(event) => setImageUrl(event.target.value)} placeholder="https://example.com/icon.png" inputMode="url" maxLength={2000} />
+          </Field>
+        )}
+        {formError ? <p className="text-sm text-destructive">{formError}</p> : null}
+        <div className="grid gap-2 sm:grid-cols-2">
+          <Button type="submit" variant="outline" disabled={busy}>
+            {busy ? "Saving…" : "Save icon"}
+          </Button>
+          <Button type="button" variant="outline" disabled={busy} onClick={() => void saveIcon(true)}>
+            Refresh icon
+          </Button>
+        </div>
+      </form>
       <div className="flex h-12 items-end gap-px" aria-hidden>
         {bars.map((bar) => (
           <span key={bar.key} className="min-w-0 flex-1 rounded-sm bg-foreground/70" style={{ height: `${bar.height}%` }} />

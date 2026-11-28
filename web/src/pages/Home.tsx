@@ -2,6 +2,7 @@ import { Link } from "react-router-dom"
 import { productName } from "../../../shared/brand"
 import { Onboarding } from "@/components/onboarding"
 import { EmptyState, ErrorText, LoadingBlock, PageHeader, StatusLabel } from "@/components/ui-bits"
+import { AgentAvatar, AgentIdentity, taskActor } from "@/components/agent-avatar"
 import { useAgents, useTasks } from "@/lib/queries"
 import { PRIORITY_LABEL, timeAgo, type Agent, type Task } from "@/lib/types"
 import { usePageTitle } from "@/lib/utils"
@@ -39,6 +40,7 @@ export default function HomePage() {
           <div className="flex flex-wrap gap-2">
             {agentRows.map((agent) => (
               <Link key={agent.id} to={paths.agents} className="inline-flex min-h-11 items-center gap-2 rounded-md border px-3 text-sm">
+                <AgentAvatar name={agent.name} avatarUrl={agent.avatar_url} seed={agent.id} size="sm" />
                 <span className={`size-2 rounded-full ${agent.last_seen_at ? "bg-emerald-500" : "bg-amber-500"}`} />
                 <span>{agent.name}</span>
                 <span className="text-xs text-muted-foreground">{agent.last_seen_at ? timeAgo(agent.last_seen_at) : "Waiting"}</span>
@@ -66,14 +68,14 @@ function TaskColumn({ title, tasks, agents, empty }: { title: string; tasks: Tas
       </h2>
       <div className="space-y-2">
         {tasks.slice(0, 8).map((task) => {
-          const holder = agents.find((agent) => agent.id === (task.claimed_by ?? task.assignee_agent_id))
+          const holder = taskActor(task, agents)
           return (
             <Link key={task.id} to={paths.task(task.id)} className="block rounded-lg border p-3 hover:bg-accent">
               <div className="text-sm font-medium">{task.title}</div>
               <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
                 <StatusLabel status={task.status} />
                 <span>{PRIORITY_LABEL[task.priority] ?? `P${task.priority}`}</span>
-                {holder ? <span>{holder.name}</span> : null}
+                {holder ? <AgentIdentity agent={holder} /> : null}
                 <span>{timeAgo(task.updated_at)}</span>
               </div>
             </Link>

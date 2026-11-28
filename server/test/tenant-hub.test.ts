@@ -29,6 +29,10 @@ function agent(id: string, workspaceId: string, slug: string): Agent {
     workspace_id: workspaceId,
     created_by: workspaceId === WS_A ? USER_A : USER_B,
     oauth_client_id: null,
+    avatar_url: null,
+    client_uri: null,
+    logo_uri: null,
+    website_url: null,
   };
 }
 
@@ -141,10 +145,17 @@ test("server queries refuse another workspace", async () => {
     userId: USER_A,
     workspaceId: WS_A,
     name: "Claude",
-    clientId: "client-1",
+    clientId: "https://claude.ai/oauth/client.json",
     clientName: "Claude",
+    clientUri: "https://claude.ai/docs",
+    logoUri: "http://127.0.0.1/logo.png",
+    redirectUris: ["https://claude.ai/api/mcp/auth_callback"],
   });
-  assert.equal(connected.oauth_client_id, "client-1");
+  assert.equal(connected.oauth_client_id, "https://claude.ai/oauth/client.json");
+  assert.equal(connected.client_uri, "https://claude.ai/docs");
+  assert.equal(connected.logo_uri, null);
+  assert.equal(connected.website_url, "https://claude.ai");
+  assert.equal(connected.avatar_url, null);
   assert.equal(connected.workspace_id, WS_A);
   assert.equal(connected.provider, "anthropic");
   assert.ok(connected.capabilities.includes("social-copy"));

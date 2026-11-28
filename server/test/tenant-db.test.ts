@@ -34,6 +34,8 @@ async function database(): Promise<PGlite> {
     "supabase/migrations/20261109000000_init.sql",
     "supabase/migrations/20261109120000_security_hardening.sql",
     "supabase/migrations/20261126120000_workspaces.sql",
+    "supabase/migrations/20261128120000_provision_personal_workspace.sql",
+    "supabase/migrations/20261128130000_agent_avatars.sql",
   ]) {
     await db.exec(readFileSync(resolve(root, file), "utf8"));
   }
@@ -56,6 +58,10 @@ test("RLS and hub functions refuse cross-tenant access", { timeout: 120_000 }, a
   const workspaceB = workspaces.rows.find((row) => row.created_by === USER_B);
   assert.ok(workspaceA && workspaceB);
   assert.equal(workspaceA.slug, "personal-111111111111");
+  const provision = await db.query<{ n: number }>(
+    "select count(*)::int as n from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname = 'provision_personal_workspace'",
+  );
+  assert.equal(provision.rows[0].n, 1);
 
   const again = await db.query<{ id: string }>("select private.provision_personal_workspace($1::uuid) as id", [USER_A]);
   assert.equal(again.rows[0].id, workspaceA.id);
@@ -125,12 +131,22 @@ test("RLS and hub functions refuse cross-tenant access", { timeout: 120_000 }, a
     assert.equal(hidden.rows[0].n, 0);
     const members = await tx.query<{ n: number }>("select count(*)::int as n from workspace_members where user_id = $1", [USER_B]);
     assert.equal(members.rows[0].n, 0);
-    const badge = await tx.query<{ has_api_key: boolean }>("select has_api_key from agents where id = $1", [agentA.rows[0].id]);
+    const badge = await tx.query<{ has_api_key: boolean; avatar_url: string | null }>(
+      "select has_api_key, avatar_url, client_uri, logo_uri, website_url from agents where id = $1",
+      [agentA.rows[0].id],
+    );
     assert.equal(badge.rows[0].has_api_key, true);
+    assert.equal(badge.rows[0].avatar_url, null);
     const ensured = await tx.query<{ id: string }>("select ensure_personal_workspace() as id");
     assert.equal(ensured.rows[0].id, workspaceA.id);
     const createdWs = await tx.query<{ id: string }>("select create_workspace('Acme Lab') as id");
     assert.ok(createdWs.rows[0].id);
+  });
+
+  await db.transaction(async (tx) => {
+    await tx.query(`select set_config('request.jwt.claim.sub', $1, true)`, [USER_A]);
+    await tx.exec("set local role authenticated");
+    await assert.rejects(() => tx.query("update agents set avatar_url = 'https://evil.example/a.png' where id = $1", [agentA.rows[0].id]));
   });
 
   await db.transaction(async (tx) => {

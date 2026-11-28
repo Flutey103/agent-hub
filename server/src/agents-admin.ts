@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { sourcesFromHints, type AvatarHints } from "./avatar.js";
 import { generateKey, hashKey } from "./auth.js";
 import { providerFromClientName, resolveCapabilities } from "./capabilities.js";
 import { db, HubError } from "./db.js";
@@ -67,6 +68,10 @@ export async function createAgentWithKey(input: {
     api_key_hash: hashKey(apiKey),
     is_active: true,
     created_by: input.userId,
+    avatar_url: null,
+    client_uri: null,
+    logo_uri: null,
+    website_url: null,
   });
   return { agent, apiKey };
 }
@@ -88,9 +93,21 @@ export async function registerConnectedAgent(input: {
   preset?: string;
   clientId: string;
   clientName: string;
+  clientUri?: string | null;
+  logoUri?: string | null;
+  redirectUris?: string[] | null;
+  websiteUrl?: string | null;
 }): Promise<Agent> {
   await requireMembership(input.userId, input.workspaceId);
   const name = cleanName(input.name);
+  const hints: AvatarHints = {
+    clientId: input.clientId,
+    clientUri: input.clientUri,
+    logoUri: input.logoUri,
+    redirectUris: input.redirectUris,
+    websiteUrl: input.websiteUrl,
+  };
+  const sources = sourcesFromHints(hints);
   return insertAgent({
     workspace_id: input.workspaceId,
     slug: agentSlug(name),
@@ -101,6 +118,10 @@ export async function registerConnectedAgent(input: {
     is_active: true,
     created_by: input.userId,
     oauth_client_id: input.clientId,
+    avatar_url: null,
+    client_uri: sources.client_uri,
+    logo_uri: sources.logo_uri,
+    website_url: sources.website_url,
   });
 }
 
