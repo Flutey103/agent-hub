@@ -20,6 +20,17 @@ declare global {
 
 type EnvName = keyof Env | "PUBLIC_URL" | "DEFAULT_LEASE_MINUTES" | "RUNNER_ENABLED";
 
+/** Thrown when a required Worker secret or var is unset. `binding` is the name, never a value. */
+export class ConfigError extends Error {
+  readonly binding: string;
+
+  constructor(binding: string) {
+    super(`Missing required env var ${binding}`);
+    this.name = "ConfigError";
+    this.binding = binding;
+  }
+}
+
 function read(name: EnvName): string | undefined {
   const bound = currentEnv();
   if (bound && name in bound) {
@@ -31,7 +42,7 @@ function read(name: EnvName): string | undefined {
 
 function required(name: "SUPABASE_URL" | "SUPABASE_SERVICE_ROLE_KEY"): string {
   const value = read(name);
-  if (!value) throw new Error(`Missing required env var ${name}`);
+  if (!value) throw new ConfigError(name);
   return value;
 }
 

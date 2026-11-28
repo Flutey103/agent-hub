@@ -4,7 +4,9 @@ import { test } from "node:test";
 import { AUTH_CALLBACK_FLAG, authorizeResumeTarget, isSafeAuthorizePath, parseOAuthReturn, serializeOAuthReturn } from "../../shared/oauth-return.js";
 import { isMcpPath, isStaticAgentKey } from "../src/auth.js";
 import { prefillAgentName, providerFromClientName, resolveCapabilities } from "../src/capabilities.js";
-import { consentHandleBoundToBrowser, postedAccessToken, sessionPostHeadersAllowed } from "../src/oauth.js";
+import { sessionCookie, clearSessionCookie, SESSION_COOKIE } from "../src/session-cookie.js";
+import { ConfigError } from "../src/env.js";
+import { consentHandleBoundToBrowser, postedAccessToken, sessionFailure, sessionPostHeadersAllowed } from "../src/oauth.js";
 import { OAUTH_SESSION_SCRIPT, renderConsentPage } from "../src/oauth-page.js";
 import { createOAuthProvider } from "../src/worker.js";
 
@@ -57,8 +59,7 @@ test("login page checks for an existing session and offers an email link", () =>
   assert.match(html, /Email me a sign-in link/);
   assert.match(html, /type="password"/);
   assert.match(html, /name="action" value="login"/);
-  assert.match(html, /name="action" value="session"/);
-  assert.match(html, /name="access_token" value=""/);
+  assert.equal(html.includes("access_token"), false);
   assert.match(html, new RegExp(`src="${OAUTH_SESSION_SCRIPT.replaceAll(".", "\\.")}"`));
   assert.match(html, /name="handle" value="handle&#34;1"/);
   assert.equal(html.includes("value=\"all\" selected"), false);
@@ -119,6 +120,36 @@ test("session handoff allows the no-referrer Origin null post and rejects a cros
   assert.equal(postedAccessToken("two tokens"), null);
   assert.equal(postedAccessToken("x".repeat(8193)), null);
   assert.equal(postedAccessToken(new File(["tok"], "tok.txt")), null);
+});
+
+test("the app session cookie is first-party and readable on a later visit", () => {
+  const request = new Request("https://agent-hub.example/authorize?client_id=abc");
+  const set = sessionCookie("header.payload.sig", request);
+  assert.match(set, new RegExp(`^${SESSION_COOKIE}=`));
+  assert.match(set, /HttpOnly/);
+  assert.match(set, /SameSite=Lax/);
+  assert.match(set, /Secure/);
+  assert.equal(set.includes("header.payload.sig"), true);
+  const cleared = clearSessionCookie(request);
+  assert.match(cleared, /Max-Age=0/);
+  const local = sessionCookie("tok", new Request("http://127.0.0.1/authorize?x=1"));
+  assert.equal(local.includes("Secure"), false);
+});
+
+test("a missing service role binding is reported without blaming the session", () => {
+  const missing = sessionFailure(new ConfigError("SUPABASE_SERVICE_ROLE_KEY"));
+  assert.equal(missing.rejection, undefined);
+  assert.match(missing.message, /Supabase service role secret/);
+  assert.equal(missing.log.binding, "SUPABASE_SERVICE_ROLE_KEY");
+  assert.equal(JSON.stringify(missing.log).includes("eyJ"), false);
+  const invalid = sessionFailure({ name: "AuthApiError", status: 401, code: "bad_jwt", message: "invalid JWT" });
+  assert.equal(invalid.rejection, "invalid");
+  assert.match(invalid.message, /expired/);
+  assert.equal(invalid.log.status, 401);
+  assert.equal(invalid.log.code, "bad_jwt");
+  const offline = sessionFailure({ name: "AuthRetryableFetchError", status: 0, message: "Failed to fetch" });
+  assert.equal(offline.rejection, "error");
+  assert.match(offline.message, /Could not check your sign-in/);
 });
 
 test("consent cookie binds the handle to this browser", async () => {

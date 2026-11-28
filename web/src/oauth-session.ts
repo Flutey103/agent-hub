@@ -1,5 +1,6 @@
 import { OAUTH_RETURN_STORAGE_KEY, serializeOAuthReturn } from "../../shared/oauth-return"
 import { checkEmailSignIn, magicLinkErrorMessage } from "@/lib/auth-copy"
+import { publishHubSession } from "@/lib/session-cookie"
 import { supabase, supabaseConfigured } from "@/lib/supabase"
 
 const REFRESH_WITHIN_MS = 60_000
@@ -33,20 +34,21 @@ async function currentAccessToken(): Promise<string | null> {
   return null
 }
 
-function postAccessToken(token: string): void {
-  const form = document.getElementById("session-form")
-  if (!(form instanceof HTMLFormElement)) return
-  const input = form.querySelector("input[name=access_token]")
-  if (!(input instanceof HTMLInputElement)) return
-  input.value = token
-  const checking = document.getElementById("checking")
-  if (checking) {
-    checking.hidden = false
-    checking.textContent = "Signing in…"
+async function adoptSession(token: string): Promise<void> {
+  const adopted = await publishHubSession(token)
+  if (!adopted) {
+    showLogin()
+    setStatus("Could not keep this sign-in for the approval page. Sign in here.", true)
+    return
   }
-  const panel = document.getElementById("login-panel")
-  if (panel) panel.hidden = true
-  form.submit()
+  const guard = "ah_session_synced"
+  if (sessionStorage.getItem(guard) === "1") {
+    showLogin()
+    setStatus("Could not keep this sign-in for the approval page. Sign in here.", true)
+    return
+  }
+  sessionStorage.setItem(guard, "1")
+  window.location.reload()
 }
 
 async function sendMagicLink(button: HTMLButtonElement): Promise<void> {
@@ -119,7 +121,7 @@ async function main(): Promise<void> {
   try {
     const token = await currentAccessToken()
     if (token) {
-      postAccessToken(token)
+      await adoptSession(token)
       return
     }
   } catch {

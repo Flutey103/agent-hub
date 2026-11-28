@@ -3,6 +3,7 @@ import { Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom"
 import { AppShell } from "@/components/app-shell"
 import { AuthProvider, useAuth } from "@/lib/auth"
 import { commitAuthorizeResume, peekAuthorizeResume } from "@/lib/oauth-return"
+import { publishHubSession } from "@/lib/session-cookie"
 import { useRealtime } from "@/lib/queries"
 import { supabaseConfigured } from "@/lib/supabase"
 import { WorkspaceProvider } from "@/lib/workspace"
@@ -125,9 +126,15 @@ function SessionRoutes() {
   const resume = ready && session && !recovery ? peekAuthorizeResume(location.search, location.hash) : undefined
   useLayoutEffect(() => {
     if (!resume?.callback) return
+    const target = resume.target
+    const token = session?.access_token
     commitAuthorizeResume()
-    if (resume.target) window.location.replace(resume.target)
-  }, [resume])
+    if (!target) return
+    void (async () => {
+      if (token) await publishHubSession(token)
+      window.location.replace(target)
+    })()
+  }, [resume, session?.access_token])
   if (resume?.target) return <LoadingScreen />
   return <ShellRoutes signedIn />
 }
