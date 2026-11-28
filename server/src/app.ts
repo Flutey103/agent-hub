@@ -7,11 +7,13 @@ import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import type { User } from "@supabase/supabase-js";
 import { createAgentWithKey, publicAgent, revokeAgentKey } from "./agents-admin.js";
-import { authenticateAgent, authenticateUser } from "./auth.js";
-import { HubError } from "./db.js";
+import { authenticateAgent, authenticateUser, bearerFrom } from "./auth.js";
+import { db, HubError } from "./db.js";
+import { ConfigError } from "./env.js";
 import { completeHumanTask, startLoop } from "./loops.js";
 import { handleMcp } from "./mcp.js";
 import { handleAuthorize } from "./oauth.js";
+import { clearSessionCookie, sessionCookie } from "./session-cookie.js";
 import { jsonSchemaFor, runTool, toolByName, tools } from "./tools.js";
 import type { Agent } from "./types.js";
 
@@ -172,6 +174,30 @@ api.delete("/workspaces/:workspaceId/api-keys/:agentId", async (c) => {
   } catch (error) {
     return toolError(c, error);
   }
+});
+
+api.post("/session", async (c) => {
+  const token = bearerFrom(c.req.raw);
+  if (!token || token.length > 8192 || /\s/.test(token)) return c.json({ error: "Missing session token" }, 401);
+  const origin = c.req.header("origin");
+  const expected = new URL(c.req.url).origin;
+  if (origin && origin !== "null" && origin !== expected) return c.json({ error: "Forbidden" }, 403);
+  if (c.req.header("sec-fetch-site") === "cross-site") return c.json({ error: "Forbidden" }, 403);
+  try {
+    const { data, error } = await db.auth.getUser(token);
+    if (error || !data.user) return c.json({ error: "Invalid session" }, 401);
+  } catch (error) {
+    if (error instanceof ConfigError) return c.json({ error: "Server is not configured" }, 500);
+    console.error(JSON.stringify({ message: "session cookie rejected", name: error instanceof Error ? error.name : "unknown" }));
+    return c.json({ error: "Could not check sign-in" }, 502);
+  }
+  c.header("set-cookie", sessionCookie(token, c.req.raw));
+  return c.body(null, 204);
+});
+
+api.delete("/session", (c) => {
+  c.header("set-cookie", clearSessionCookie(c.req.raw));
+  return c.body(null, 204);
 });
 
 api.all("*", (c) => c.json({ error: "Not found" }, 404));

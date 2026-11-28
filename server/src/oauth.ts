@@ -2,8 +2,9 @@
  * OAuth approval for MCP connectors. The provider validates the request,
  * PKCE, and the client. This page signs the user in with Supabase, lets them
  * pick a workspace and an agent name, then stores the new agent id in the
- * token props. A browser that already has a Supabase session posts that
- * access token from /oauth-session.js; it is verified before ah_session is set.
+ * token props. The web app stores the Supabase access token in the ah_session
+ * cookie on sign-in and refresh. This page reads that cookie and renders
+ * Approve without asking for a password again.
  */
 import { AuthorizationError, CimdFetchError, type OAuthHelpers } from "@cloudflare/workers-oauth-provider";
 import { createClient } from "@supabase/supabase-js";
@@ -13,9 +14,8 @@ import { prefillAgentName } from "./capabilities.js";
 import { db, HubError } from "./db.js";
 import { ConfigError, env } from "./env.js";
 import { renderConsentPage, renderMessagePage, type ConsentView } from "./oauth-page.js";
+import { readCookie, SESSION_COOKIE, sessionCookie } from "./session-cookie.js";
 import { ensurePersonalWorkspace } from "./tenant.js";
-
-const SESSION_COOKIE = "ah_session";
 
 interface SessionUser {
   id: string;
@@ -36,21 +36,6 @@ function html(body: string, extra?: Headers, status = 200): Response {
   if (!headers.has("content-security-policy")) headers.set("content-security-policy", "frame-ancestors 'none'");
   if (!headers.has("x-frame-options")) headers.set("x-frame-options", "DENY");
   return new Response(body, { status, headers });
-}
-
-function readCookie(request: Request, name: string): string | null {
-  const header = request.headers.get("cookie");
-  if (!header) return null;
-  for (const part of header.split(";")) {
-    const [key, ...rest] = part.trim().split("=");
-    if (key === name) return decodeURIComponent(rest.join("="));
-  }
-  return null;
-}
-
-function sessionCookie(token: string, request: Request): string {
-  const secure = new URL(request.url).protocol === "https:";
-  return `${SESSION_COOKIE}=${encodeURIComponent(token)}; HttpOnly; Path=/; SameSite=Lax; Max-Age=3600${secure ? "; Secure" : ""}`;
 }
 
 const MAX_ACCESS_TOKEN_LENGTH = 8192;

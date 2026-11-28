@@ -173,11 +173,6 @@ export function renderConsentPage(view: ConsentView): string {
         <div class="actions"><button class="ghost" type="button" id="magic-link">Email me a sign-in link</button></div>
         <p id="magic-status" role="status"></p>
       </div>
-      <form id="session-form" method="post" hidden>
-        <input type="hidden" name="handle" value="${escapeHtml(view.handle)}">
-        <input type="hidden" name="action" value="session">
-        <input type="hidden" name="access_token" value="" autocomplete="off">
-      </form>
       <noscript><style>#checking{display:none!important}#login-panel{display:block!important}</style></noscript>`;
     return shell(`Connect an agent`, body, {
       mode: "login",

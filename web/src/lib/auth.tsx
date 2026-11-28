@@ -1,6 +1,7 @@
 import type { Session } from "@supabase/supabase-js"
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react"
 import { supabase } from "./supabase"
+import { clearHubSession, publishHubSession } from "./session-cookie"
 
 interface AuthContextValue {
   ready: boolean
@@ -31,6 +32,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     const { data: sub } = supabase.auth.onAuthStateChange((event, next) => {
       if (event === "PASSWORD_RECOVERY") setRecovery(true)
+      if (event === "SIGNED_OUT") void clearHubSession()
+      else if (next?.access_token) void publishHubSession(next.access_token)
       settle(next)
     })
     const timer = window.setTimeout(() => {
