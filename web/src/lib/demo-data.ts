@@ -6,6 +6,11 @@ const ago = (ms: number) => new Date(Date.now() - ms).toISOString()
 export const demoUserId = "user-jordan"
 export const demoEmail = "jordan@example.com"
 
+function previewAvatar(label: string, background: string, foreground: string) {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><rect width="64" height="64" fill="${background}"/><text x="32" y="41" text-anchor="middle" font-family="Arial,sans-serif" font-size="26" font-weight="700" fill="${foreground}">${label}</text></svg>`
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
+}
+
 export const demoWorkspaces = [
   { id: "ws-north", name: "Northwind Studio", slug: "northwind", role: "owner" as const },
   { id: "ws-field", name: "Field Notes", slug: "field-notes", role: "owner" as const },
@@ -32,6 +37,9 @@ export const demoAgents: Agent[] = [
     has_api_key: false,
     oauth_client_id: "https://claude.ai",
     created_by: demoUserId,
+    avatar_url: previewAvatar("C", "#d97757", "#fffaf7"),
+    client_uri: "https://claude.ai",
+    website_url: "https://claude.ai",
   },
   {
     id: "agent-grok",
@@ -48,6 +56,9 @@ export const demoAgents: Agent[] = [
     has_api_key: false,
     oauth_client_id: "https://grok.com",
     created_by: demoUserId,
+    avatar_url: previewAvatar("G", "#2563eb", "#f8fafc"),
+    client_uri: "https://grok.com",
+    website_url: "https://grok.com",
   },
   {
     id: "agent-gpt",
@@ -64,6 +75,9 @@ export const demoAgents: Agent[] = [
     has_api_key: true,
     oauth_client_id: null,
     created_by: demoUserId,
+    avatar_url: previewAvatar("AI", "#10a37f", "#f0fdf8"),
+    website_url: "https://chatgpt.com",
+    logo_uri: null,
   },
 ]
 

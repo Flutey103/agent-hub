@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select } from "@/components/ui/menu"
 import { EmptyState, ErrorText, LoadingBlock, PageHeader, StatusDot, StatusLabel } from "@/components/ui-bits"
+import { AgentIdentity, taskActor } from "@/components/agent-avatar"
 import { useAgents, useTasks } from "@/lib/queries"
 import { PRIORITY_LABEL, STATUS_LABEL, timeAgo, type Task, type TaskStatus } from "@/lib/types"
 import { usePageTitle } from "@/lib/utils"
@@ -20,7 +21,7 @@ export default function TasksPage() {
   const [query, setQuery] = useState("")
   const [status, setStatus] = useState("all")
   const [view, setView] = useState<"list" | "board">("list")
-  const agentName = (id: string | null) => agents.data?.find((agent) => agent.id === id)?.name
+  const roster = agents.data
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase()
@@ -74,7 +75,7 @@ export default function TasksPage() {
                   <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
                     <span>{STATUS_LABEL[task.status]}</span>
                     <span>{PRIORITY_LABEL[task.priority]}</span>
-                    <span>{task.is_human ? "You" : (agentName(task.assignee_agent_id) ?? task.assignee_capability ?? "Anyone")}</span>
+                    <TaskWho task={task} agents={roster} />
                     <span>{timeAgo(task.updated_at)}</span>
                   </div>
                 </div>
@@ -104,6 +105,9 @@ export default function TasksPage() {
                     <Link key={task.id} to={paths.task(task.id)} className="block rounded-lg border p-3 hover:bg-accent">
                       <div className="text-sm font-medium">{task.title}</div>
                       <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{task.brief}</p>
+                      <div className="mt-2 text-xs text-muted-foreground">
+                        <TaskWho task={task} agents={roster} />
+                      </div>
                     </Link>
                   ))}
                 </div>
@@ -114,4 +118,11 @@ export default function TasksPage() {
       )}
     </div>
   )
+}
+
+function TaskWho({ task, agents }: { task: Task; agents: ReturnType<typeof useAgents>["data"] }) {
+  const actor = taskActor(task, agents)
+  if (actor) return <AgentIdentity agent={actor} />
+  if (task.is_human) return <span>You</span>
+  return <span>{task.assignee_capability ?? "Anyone"}</span>
 }

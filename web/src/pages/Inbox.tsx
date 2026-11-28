@@ -7,6 +7,7 @@ import { ResponsiveDialog } from "@/components/responsive-dialog"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/input"
 import { EmptyState, ErrorText, LoadingBlock, PageHeader, StatusLabel } from "@/components/ui-bits"
+import { AgentIdentity, approvalAgent } from "@/components/agent-avatar"
 import { useAgents, useTasks } from "@/lib/queries"
 import { approveTask, refreshWork, requestTaskChanges, usePreviewLock } from "@/lib/task-actions"
 import { PRIORITY_LABEL, timeAgo, type Task } from "@/lib/types"
@@ -93,9 +94,10 @@ export default function InboxPage() {
                 <button type="button" className="w-full text-left" onClick={() => setSelected(task.id)}>
                   <div className="text-sm font-medium">{task.title}</div>
                   <p className="mt-1 line-clamp-3 text-xs text-muted-foreground">{task.brief}</p>
-                  <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                  <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
                     <StatusLabel status={task.status} />
                     <span>{PRIORITY_LABEL[task.priority]}</span>
+                    {approvalAgent(task, tasksQuery.data ?? [], agents.data) ? <AgentIdentity agent={approvalAgent(task, tasksQuery.data ?? [], agents.data)!} /> : null}
                     <span>{timeAgo(task.updated_at)}</span>
                   </div>
                 </button>

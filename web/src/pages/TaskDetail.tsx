@@ -4,6 +4,7 @@ import { useState } from "react"
 import { Link, useParams } from "react-router-dom"
 import { toast } from "sonner"
 import { productName } from "../../../shared/brand"
+import { AgentAvatar, AgentIdentity, findAgent } from "@/components/agent-avatar"
 import { MarkdownView } from "@/components/markdown-view"
 import { ResponsiveDialog } from "@/components/responsive-dialog"
 import { Button } from "@/components/ui/button"
@@ -37,7 +38,10 @@ export default function TaskDetailPage() {
   if (taskQuery.isLoading) return <LoadingBlock />
   if (taskQuery.error || !task) return <ErrorText message={taskQuery.error?.message ?? "Task not found"} />
 
-  const agentName = (agentId: string | null) => agents.data?.find((agent) => agent.id === agentId)?.name ?? (agentId ? "Assistant" : "You")
+  const roster = agents.data
+  const assignee = findAgent(roster, task.assignee_agent_id)
+  const claimed = findAgent(roster, task.claimed_by)
+  const named = (agentId: string | null) => findAgent(roster, agentId)
   const inputs = (artifacts.data ?? []).filter((artifact) => task.input_artifact_ids.includes(artifact.id))
   const outputs = (artifacts.data ?? []).filter((artifact) => task.output_artifact_ids.includes(artifact.id))
   const canAct = ["awaiting_human", "in_review", "queued", "claimed"].includes(task.status)
@@ -102,10 +106,17 @@ export default function TaskDetailPage() {
         </Link>
         <div>
           <h1 className="text-xl font-semibold tracking-tight">{task.title}</h1>
-          <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-muted-foreground">
             <StatusLabel status={task.status} />
             <span>{PRIORITY_LABEL[task.priority]}</span>
-            <span>{task.is_human ? "Assigned to you" : agentName(task.assignee_agent_id)}</span>
+            <span className="inline-flex items-center gap-1.5">
+              Assignee {assignee ? <AgentIdentity agent={assignee} /> : task.is_human ? "You" : (task.assignee_capability ?? "Anyone")}
+            </span>
+            {claimed ? (
+              <span className="inline-flex items-center gap-1.5">
+                Claimed by <AgentIdentity agent={claimed} />
+              </span>
+            ) : null}
             <span>Updated {timeAgo(task.updated_at)}</span>
           </div>
         </div>
@@ -126,18 +137,24 @@ export default function TaskDetailPage() {
             <article key={`${item.kind}-${index}`} className="rounded-lg border p-3">
               <div className="text-xs text-muted-foreground">{timeAgo(item.at)}</div>
               {item.kind === "note" ? (
-                <div className="mt-1 text-sm">
-                  <div className="font-medium">{agentName(item.note.agent_id)} handed off</div>
-                  <p className="mt-1 whitespace-pre-wrap">{item.note.summary}</p>
-                  {item.note.suggested_next ? <p className="mt-2 text-xs text-muted-foreground">Next: {item.note.suggested_next}</p> : null}
+                <div className="mt-1 flex items-start gap-2 text-sm">
+                  {named(item.note.agent_id) ? <AgentAvatar name={named(item.note.agent_id)!.name} avatarUrl={named(item.note.agent_id)?.avatar_url} seed={item.note.agent_id ?? undefined} className="mt-0.5" /> : null}
+                  <div className="min-w-0">
+                    <div className="font-medium">{named(item.note.agent_id)?.name ?? "You"} handed off</div>
+                    <p className="mt-1 whitespace-pre-wrap">{item.note.summary}</p>
+                    {item.note.suggested_next ? <p className="mt-2 text-xs text-muted-foreground">Next: {item.note.suggested_next}</p> : null}
+                  </div>
                 </div>
               ) : null}
               {item.kind === "input" || item.kind === "output" ? <ArtifactBody artifact={item.artifact} label={item.kind === "input" ? "Input" : "Output"} /> : null}
               {item.kind === "call" ? (
-                <div className="mt-1 text-sm">
-                  <span className="font-medium">{item.call.tool}</span>
-                  <span className="text-muted-foreground"> · {agentName(item.call.agent_id)} · {item.call.ok ? "ok" : "failed"}</span>
-                  {item.call.duration_ms != null ? <span className="text-muted-foreground"> · {item.call.duration_ms} ms</span> : null}
+                <div className="mt-1 flex items-center gap-2 text-sm">
+                  {named(item.call.agent_id) ? <AgentAvatar name={named(item.call.agent_id)!.name} avatarUrl={named(item.call.agent_id)?.avatar_url} seed={item.call.agent_id ?? undefined} /> : null}
+                  <div className="min-w-0">
+                    <span className="font-medium">{item.call.tool}</span>
+                    <span className="text-muted-foreground"> · {named(item.call.agent_id)?.name ?? "Assistant"} · {item.call.ok ? "ok" : "failed"}</span>
+                    {item.call.duration_ms != null ? <span className="text-muted-foreground"> · {item.call.duration_ms} ms</span> : null}
+                  </div>
                 </div>
               ) : null}
             </article>

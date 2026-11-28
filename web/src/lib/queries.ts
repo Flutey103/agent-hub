@@ -15,7 +15,7 @@ function inDemoWorkspace(workspaceId: string) {
   return workspaceId === "ws-north"
 }
 
-const AGENT_COLUMNS = "id,slug,name,provider,model,mode,capabilities,system_prompt,is_active,last_seen_at,workspace_id,has_api_key,oauth_client_id,created_by"
+const AGENT_COLUMNS = "id,slug,name,provider,model,mode,capabilities,system_prompt,is_active,last_seen_at,workspace_id,has_api_key,oauth_client_id,created_by,avatar_url,client_uri,logo_uri,website_url"
 
 export function useAgents() {
   const { workspaceId, demo } = useWorkspace()

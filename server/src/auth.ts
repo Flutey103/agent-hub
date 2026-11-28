@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import type { User } from "@supabase/supabase-js";
 import { waitUntil } from "./context.js";
 import { db } from "./db.js";
+import { readCookie, SESSION_COOKIE } from "./session-cookie.js";
 import { AGENT_COLUMNS, type Agent } from "./types.js";
 
 export interface GrantProps {
@@ -92,6 +93,23 @@ export async function loadAgentForGrant(props: GrantProps): Promise<Agent | null
   if (agent.workspace_id !== props.workspaceId) return null;
   touchLastSeen(agent);
   return agent;
+}
+
+/**
+ * Human identity from a Bearer token or the ah_session cookie. Image requests
+ * cannot send Authorization, so the avatar route accepts the cookie too.
+ * This does not provision a workspace; mutating routes still use authenticateUser.
+ */
+export async function userIdFromRequest(request: Request): Promise<string | Response> {
+  const token = bearerFrom(request) ?? readCookie(request, SESSION_COOKIE);
+  if (!token) return new Response(null, { status: 401, headers: { "cache-control": "no-store" } });
+  try {
+    const { data, error } = await db.auth.getUser(token);
+    if (error || !data.user) return new Response(null, { status: 401, headers: { "cache-control": "no-store" } });
+    return data.user.id;
+  } catch (error) {
+    return dbFailure(error);
+  }
 }
 
 /** Authenticates a human by their Supabase session token and ensures they have a personal workspace. */

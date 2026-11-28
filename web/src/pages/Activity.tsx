@@ -4,6 +4,7 @@ import { productName } from "../../../shared/brand"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { EmptyState, ErrorText, LoadingBlock, PageHeader } from "@/components/ui-bits"
+import { AgentIdentity, findAgent } from "@/components/agent-avatar"
 import { useActivity, useAgents, useTasks, useToolCalls } from "@/lib/queries"
 import { timeAgo } from "@/lib/types"
 import { usePageTitle } from "@/lib/utils"
@@ -18,7 +19,11 @@ export default function ActivityPage() {
   const calls = useToolCalls()
   const agents = useAgents()
   const tasks = useTasks()
-  const agentName = (id: string | null) => (id ? (agents.data?.find((agent) => agent.id === id)?.name ?? "Assistant") : "Hub")
+  const agentName = (id: string | null) => (id ? (findAgent(agents.data, id)?.name ?? "Assistant") : "Hub")
+  const identity = (id: string | null) => {
+    const agent = findAgent(agents.data, id)
+    return agent ? <AgentIdentity agent={agent} /> : <span className="font-medium">{agentName(id)}</span>
+  }
   const taskTitle = (id: string | null) => tasks.data?.find((task) => task.id === id)?.title
   const needle = query.trim().toLowerCase()
 
@@ -47,8 +52,8 @@ export default function ActivityPage() {
           <ol className="space-y-2">
             {events.map((row) => (
               <li key={row.id} className="rounded-lg border px-3 py-3 text-sm">
-                <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                  <span className="font-medium">{agentName(row.agent_id)}</span>
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  {identity(row.agent_id)}
                   <span className="text-muted-foreground">{row.event.replace(/_/g, " ")}</span>
                   <span className="text-xs text-muted-foreground">{timeAgo(row.created_at)}</span>
                 </div>
@@ -71,7 +76,7 @@ export default function ActivityPage() {
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <span className={`size-2 rounded-full ${row.ok ? "bg-emerald-500" : "bg-red-500"}`} />
                 <span className="font-medium">{row.tool}</span>
-                <span className="text-muted-foreground">{agentName(row.agent_id)}</span>
+                {identity(row.agent_id)}
                 {row.duration_ms != null ? <span className="text-xs text-muted-foreground">{row.duration_ms} ms</span> : null}
                 <span className="text-xs text-muted-foreground">{timeAgo(row.created_at)}</span>
               </div>

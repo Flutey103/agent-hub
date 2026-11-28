@@ -1,7 +1,7 @@
 export type TaskStatus = "queued" | "claimed" | "in_review" | "awaiting_human" | "done" | "failed" | "cancelled";
 
 export const AGENT_COLUMNS =
-  "id, slug, name, provider, model, mode, capabilities, system_prompt, is_active, workspace_id, created_by, oauth_client_id";
+  "id, slug, name, provider, model, mode, capabilities, system_prompt, is_active, workspace_id, created_by, oauth_client_id, avatar_url, client_uri, logo_uri, website_url";
 
 export interface Agent {
   id: string;
@@ -16,6 +16,10 @@ export interface Agent {
   workspace_id: string;
   created_by: string | null;
   oauth_client_id: string | null;
+  avatar_url: string | null;
+  client_uri: string | null;
+  logo_uri: string | null;
+  website_url: string | null;
 }
 
 export interface Task {

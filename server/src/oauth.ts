@@ -10,6 +10,7 @@ import { AuthorizationError, CimdFetchError, type OAuthHelpers } from "@cloudfla
 import { createClient } from "@supabase/supabase-js";
 import type { Context } from "hono";
 import { deleteAgent, registerConnectedAgent } from "./agents-admin.js";
+import { scheduleAvatar } from "./avatar.js";
 import { prefillAgentName } from "./capabilities.js";
 import { db, HubError } from "./db.js";
 import { ConfigError, env } from "./env.js";
@@ -273,6 +274,16 @@ async function submitConsent(request: Request, oauth: OAuthHelpers): Promise<Res
       preset,
       clientId: approved.request.clientId,
       clientName: client?.clientName || details.clientName,
+      clientUri: client?.clientUri ?? details.clientUri ?? null,
+      logoUri: client?.logoUri ?? details.logoUri ?? null,
+      redirectUris: [...(client?.redirectUris ?? []), approved.request.redirectUri],
+    });
+    scheduleAvatar(agent.id, workspaceId, {
+      clientId: approved.request.clientId,
+      clientUri: agent.client_uri,
+      logoUri: agent.logo_uri,
+      websiteUrl: agent.website_url,
+      redirectUris: client?.redirectUris ?? [],
     });
     agentId = agent.id;
     const { redirectTo } = await oauth.completeAuthorization({

@@ -7,6 +7,7 @@ import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import type { User } from "@supabase/supabase-js";
 import { createAgentWithKey, publicAgent, revokeAgentKey } from "./agents-admin.js";
+import { backfillAgentAvatars, serveAgentAvatar, updateAgentAvatar } from "./avatar.js";
 import { authenticateAgent, authenticateUser, bearerFrom } from "./auth.js";
 import { db, HubError } from "./db.js";
 import { ConfigError } from "./env.js";
@@ -160,6 +161,44 @@ api.post("/workspaces/:workspaceId/api-keys", async (c) => {
       systemPrompt: typeof body.system_prompt === "string" ? body.system_prompt : null,
     });
     return c.json({ agent: publicAgent(created.agent), api_key: created.apiKey });
+  } catch (error) {
+    return toolError(c, error);
+  }
+});
+
+api.get("/agents/:id/avatar", (c) => serveAgentAvatar(c.req.raw, c.req.param("id")));
+
+api.post("/workspaces/:workspaceId/agents/:agentId/avatar", async (c) => {
+  const user = await authenticateUser(c.req.raw);
+  if (user instanceof Response) return user;
+  const body = await readJson(c);
+  if (body instanceof Response) return body;
+  try {
+    const agent = await updateAgentAvatar({
+      userId: user.id,
+      workspaceId: c.req.param("workspaceId"),
+      agentId: c.req.param("agentId"),
+      websiteUrl: body.website_url === undefined ? undefined : typeof body.website_url === "string" ? body.website_url : null,
+      imageUrl: body.image_url === undefined ? undefined : typeof body.image_url === "string" ? body.image_url : null,
+      refresh: body.refresh === true,
+    });
+    return c.json({ agent: publicAgent(agent), avatar_url: agent.avatar_url });
+  } catch (error) {
+    return toolError(c, error);
+  }
+});
+
+api.post("/workspaces/:workspaceId/avatars/backfill", async (c) => {
+  const user = await authenticateUser(c.req.raw);
+  if (user instanceof Response) return user;
+  const oauth = c.env.OAUTH_PROVIDER;
+  try {
+    const result = await backfillAgentAvatars({
+      userId: user.id,
+      workspaceId: c.req.param("workspaceId"),
+      lookupClient: oauth ? (clientId) => oauth.lookupClient(clientId) : undefined,
+    });
+    return c.json(result);
   } catch (error) {
     return toolError(c, error);
   }
